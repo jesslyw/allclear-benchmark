@@ -7,14 +7,13 @@
 import requests
 from pathlib import Path
 import multiprocessing as mp
-from tqdm import tqdm  # type: ignore
+from tqdm import tqdm
 import time
 import argparse
 
 # Configuration
 BASE_URL = "http://allclear.cs.cornell.edu/dataset/allclear"
 CHUNK_SIZE = 8192
-
 
 def download_file(url, dest_path, show_progress=True):
     """Download a file with progress bar and return success status"""
@@ -43,7 +42,6 @@ def download_file(url, dest_path, show_progress=True):
             dest_path.unlink()
         return False
 
-
 def verify_file(file_path):
     """Verify if file is complete by trying to open it"""
     try:
@@ -54,7 +52,6 @@ def verify_file(file_path):
         return True
     except:
         return False
-
 
 def download_metadata():
     """Download metadata files"""
@@ -99,7 +96,7 @@ def load_roi_list():
     metadata_dir = Path("metadata")
     roi_ids = set()
 
-    for filename in ["test_rois_3k.txt", "train_rois_19k.txt", "val_rois_1k.txt"]:
+    for filename in ["test_rois_3k.txt"]:
         file_path = metadata_dir / "rois" / filename
         if not file_path.exists():
             print(f"Warning: {filename} not found")
@@ -109,7 +106,6 @@ def load_roi_list():
             roi_ids.update(line.strip() for line in f)
 
     return sorted(list(roi_ids))
-
 
 def download_roi_worker(roi_batch):
     """Worker function for parallel ROI downloads"""
@@ -152,13 +148,11 @@ def download_roi_worker(roi_batch):
         else:
             print(f"Skipping {filename} - not found on server")
 
-
 def main():
     # Add argument parser
-    parser = argparse.ArgumentParser(
-        description='Download dataset with configurable CPU cores')
+    parser = argparse.ArgumentParser(description='Download dataset with configurable CPU cores')
     parser.add_argument('--cpus', type=int, default=8,
-                        help='Number of CPU cores to use (default: 8)')
+                       help='Number of CPU cores to use (default: 8)')
     args = parser.parse_args()
 
     # Calculate N_CORES using args.cpus
@@ -175,8 +169,7 @@ def main():
 
     # Split ROIs into chunks for parallel processing
     chunk_size = len(roi_ids) // n_cores + 1
-    roi_chunks = [roi_ids[i:i + chunk_size]
-                  for i in range(0, len(roi_ids), chunk_size)]
+    roi_chunks = [roi_ids[i:i + chunk_size] for i in range(0, len(roi_ids), chunk_size)]
 
     # Download ROIs in parallel
     print(f"\nDownloading ROIs using {n_cores} processes...")
@@ -184,7 +177,6 @@ def main():
         pool.map(download_roi_worker, roi_chunks)
 
     print("\nDownload completed!")
-
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,4 @@
+[submodule "models/VPint2"]
+	path = models/VPint2
+	url = https://github.com/ADA-research/VPint2.git
+

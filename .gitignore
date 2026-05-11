@@ -1,6 +1,8 @@
 /.agents
+.DS_Store
 __pycache__/
 *.pyc
 metadata/
 data/
 skills-lock.json
+helper_scripts/

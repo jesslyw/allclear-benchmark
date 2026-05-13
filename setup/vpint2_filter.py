@@ -14,7 +14,7 @@ def string_to_datetime(value):
     return datetime.strptime(value, TIME_FORMAT)
 
 
-def cloud_shadow_fraction(row):
+def cloud_shadow_percentage(row):
     cloud = row["cloud_percentage_30"]
     shadow = row["shadow_percentage_30"]
 
@@ -29,7 +29,7 @@ def cloud_shadow_fraction(row):
 def load_cloud_metadata(csv_path):
     """
     Create lookup:
-    (roi, capture_date) -> cloud/shadow fraction
+    (roi, capture_date) -> cloud/shadow percentage
     """
     cloud_lookup = {}
 
@@ -39,7 +39,7 @@ def load_cloud_metadata(csv_path):
             #    continue
 
             key = (row["roi"], row["capture_date"])
-            cloud_lookup[key] = cloud_shadow_fraction(row)
+            cloud_lookup[key] = cloud_shadow_percentage(row)
 
     return cloud_lookup
 
@@ -67,7 +67,7 @@ def find_vpint2_pair(
         cloudy_date = cloudy_input[0]
         cloudy_dt = string_to_datetime(cloudy_date)
 
-        # has cloud/shadow fraction
+        # has cloud/shadow percentage
         cloudy_cloud = get_cloud(cloud_lookup, roi, cloudy_date)
         if cloudy_cloud is None:
             continue
@@ -90,12 +90,12 @@ def find_vpint2_pair(
             if ref_dt >= cloudy_dt:  # t before cloudy
                 continue
 
-            # has cloud/shadow fraction
+            # has cloud/shadow percentage
             ref_cloud = get_cloud(cloud_lookup, roi, ref_date)
             if ref_cloud is None:
                 continue
 
-            # cloud fraction below threshold (simulating clear image)
+            # cloud percentage below threshold (simulating clear image)
             if ref_cloud <= max_ref_cloud:
                 refs.append((ref_idx, ref_dt, ref_cloud))
 
@@ -105,7 +105,7 @@ def find_vpint2_pair(
         ref_idx, ref_dt, ref_cloud = min(
             refs,
             key=lambda x: (
-                x[2],  # pick reference image with lowest cloud fraction
+                x[2],  # pick reference image with lowest cloud percentage
                 # if tie, pick reference closest in time to cloudy image
                 abs((cloudy_dt - x[1]).days),
             ),
@@ -114,8 +114,8 @@ def find_vpint2_pair(
         candidate = {
             "cloudy_index": cloudy_idx,
             "reference_index": ref_idx,
-            "cloudy_cloud_shadow_frac": round(cloudy_cloud, 4),
-            "reference_cloud_shadow_frac": round(ref_cloud, 4),
+            "cloudy_cloud_shadow_pct": round(cloudy_cloud, 4),
+            "reference_cloud_shadow_pct": round(ref_cloud, 4),
             "cloudy_reference_delta_days": abs((cloudy_dt - ref_dt).days),
             "cloudy_target_delta_days": cloudy_target_delta,
         }
@@ -126,14 +126,14 @@ def find_vpint2_pair(
 
         current_score = (
             candidate["cloudy_target_delta_days"],
-            candidate["reference_cloud_shadow_frac"],
-            -candidate["cloudy_cloud_shadow_frac"],
+            candidate["reference_cloud_shadow_pct"],
+            -candidate["cloudy_cloud_shadow_pct"],
         )
 
         best_score = (
             best["cloudy_target_delta_days"],
-            best["reference_cloud_shadow_frac"],
-            -best["cloudy_cloud_shadow_frac"],
+            best["reference_cloud_shadow_pct"],
+            -best["cloudy_cloud_shadow_pct"],
         )
 
         # Keep the best candidate for this ROI:
@@ -159,20 +159,26 @@ def main():
     parser.add_argument(
         "--csv",
         default="metadata/data/s2_metadata.csv",
-        help="Path to s2_metadata.csv",
+        help="Path to s2_metadata.csv (AllClear s2 metadata used to derive cloud/shadow percentages per image)",
     )
 
     parser.add_argument(
-        "--out",
-        default="vpint2_subset.json",
-        help="Output JSON path",
+        "--pairs-out",
+        default="setup/vpint2_pairs.json",
+        help="Output path for VPint2 pairs metadata JSON",
+    )
+
+    parser.add_argument(
+        "--data-out",
+        default="setup/vpint2_samples.json",
+        help="Output path for VPint2 samples JSON (AllClear format, eligible samples only)",
     )
 
     parser.add_argument(
         "--max-ref-cloud",
         type=float,
         default=0.10,
-        help="Maximum cloud/shadow fraction for reference input",
+        help="Maximum cloud/shadow percentage for reference input",
     )
 
     parser.add_argument(
@@ -209,8 +215,14 @@ def main():
         json.dumps(subset, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-
     print(f"Saved {len(subset)} VPint2-compatible samples to {args.out}")
+
+    dataset_subset = {sid: dataset[sid] for sid in subset}
+    Path(args.dataset_out).write_text(
+        json.dumps(dataset_subset, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Saved filtered dataset to {args.dataset_out}")
 
 
 if __name__ == "__main__":

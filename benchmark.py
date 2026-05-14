@@ -156,8 +156,8 @@ class BenchmarkRunner:
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Minimal AllClear benchmark runner")
-    parser.add_argument("--dataset-fpath", type=str, default="setup/vpint2_dataset.json",
-                        required=True, help="Path to dataset metadata JSON")
+    parser.add_argument("--dataset-fpath", type=str, default="setup/vpint2_samples.json",
+                        help="Path to dataset metadata JSON")
     parser.add_argument("--model-name", type=str, required=True,
                         help="Wrapper class name, e.g., VPint2")
     parser.add_argument("--device", type=str, default="cpu",

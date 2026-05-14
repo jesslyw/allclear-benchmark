@@ -211,18 +211,18 @@ def main():
         if pair is not None:
             subset[sample_id] = pair
 
-    Path(args.out).write_text(
+    Path(args.pairs_out).write_text(
         json.dumps(subset, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    print(f"Saved {len(subset)} VPint2-compatible samples to {args.out}")
+    print(f"Saved {len(subset)} VPint2-compatible samples to {args.pairs_out}")
 
     dataset_subset = {sid: dataset[sid] for sid in subset}
-    Path(args.dataset_out).write_text(
+    Path(args.data_out).write_text(
         json.dumps(dataset_subset, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    print(f"Saved filtered dataset to {args.dataset_out}")
+    print(f"Saved filtered dataset to {args.data_out}")
 
 
 if __name__ == "__main__":

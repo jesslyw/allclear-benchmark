@@ -23,7 +23,7 @@ def to_rgb(t):
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset-fpath", default="setup/vpint2_dataset.json")
+    p.add_argument("--dataset-fpath", default="setup/vpint2_samples.json")
     p.add_argument("--vpint2-pairs-fpath", default="setup/vpint2_pairs.json")
     p.add_argument("--roi", required=True, help="e.g. roi1008997")
     return p.parse_args()

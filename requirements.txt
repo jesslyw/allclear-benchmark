@@ -1,5 +1,7 @@
-torch==2.5.1
+torch
 numpy==2.4.4
+pandas
 rasterio==1.4.4
 tqdm==4.67.3
 requests==2.33.1
+matplotlib

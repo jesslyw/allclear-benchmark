@@ -3,6 +3,16 @@
 Benchmark for evaluating cloud removal models on the [AllClear](https://github.com/Zhou-Hangyu/allclear) dataset.
 Implements VPint2 as a baseline, evaluated on a filtered subset of the AllClear test set.
 
+## Requirements
+
+Python 3.10. Using [uv](https://docs.astral.sh/uv/getting-started/installation/):
+
+```bash
+uv venv --python 3.13
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
+
 ## Setup
 
 Filters the AllClear test set to a subset compatible with VPint2's input requirements. See docs/methodology.md for the filtering criteria.
@@ -24,7 +34,7 @@ Thresholds used for filtering can be configured at the top of `setup/setup.sh`.
 ## Run benchmark
 
 ```bash
-python benchmark.py --model-name VPint2 --vpint2-pairs-fpath setup/vpint2_pairs.json --dataset-fpath setup/vpint2_dataset.json --batch-size 1
+python benchmark.py --model-name VPint2 --batch-size 1
 ```
 
 ## Visualise predictions
@@ -39,16 +49,10 @@ Example output: ![Example visualisation](pred_vs_target/roi793494_2022-08-04_202
 
 ## Visualise all ROIs on a map
 
-A small helper script is provided to generate a GeoJSON file from the filtered subset, which can be visualised on a map tool like https://geojson.io/next.
+A small helper script is provided to generate a GeoJSON file from the filtered subset, which can be visualised using a map tool like https://geojson.io/next.
 
 ```bash
 python setup/make_geojson.py
-```
-
-## Requirements
-
-```bash
-pip install -r requirements.txt
 ```
 
 ## Attribution

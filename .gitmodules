@@ -2,3 +2,6 @@
 	path = models/VPint2
 	url = https://github.com/ADA-research/VPint2.git
 
+[submodule "models/EMRDM"]
+	path = models/EMRDM
+	url = https://github.com/Ly403/EMRDM

@@ -72,8 +72,14 @@ class BenchmarkRunner:
         name = self.args.model_name.lower()
         if name == "vpint2":
             return wrappers.VPint2(self.args)
+        if name == "emrdm":
+            return wrappers.EMRDM(self.args)
+        if name == "leastcloudy":
+            return wrappers.LeastCloudy(self.args)
+        if name == "mosaicing":
+            return wrappers.Mosaicing(self.args)
         raise ValueError(
-            f"Unknown model '{self.args.model_name}'. Available: VPint2")
+            f"Unknown model '{self.args.model_name}'. Available: VPint2, EMRDM, LeastCloudy, Mosaicing")
 
     def _setup_data_loader(self):
         with open(self.args.dataset_fpath, "r", encoding="utf-8") as f:
@@ -181,6 +187,10 @@ def parse_args():
     # model-specific data paths
     parser.add_argument("--vpint2-pairs-fpath", type=str,
                         default="setup/vpint2_pairs.json", help="Path to VPint2 pairs JSON")
+    parser.add_argument("--emrdm-config-fpath", type=str,
+                        default=None, help="Path to EMRDM config YAML")
+    parser.add_argument("--emrdm-ckpt-fpath", type=str,
+                        default=None, help="Path to EMRDM checkpoint (.ckpt)")
     return parser.parse_args()
 
 

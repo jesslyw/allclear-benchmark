@@ -5,3 +5,13 @@ rasterio==1.4.4
 tqdm==4.67.3
 requests==2.33.1
 matplotlib
+omegaconf
+pytorch_lightning
+einops
+kornia
+open-clip-torch
+timm
+transformers
+torchvision
+safetensors
+dctorch

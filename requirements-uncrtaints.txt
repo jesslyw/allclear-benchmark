@@ -1,7 +1,5 @@
-torch==2.12.0
-pandas
-matplotlib
 affine==2.4.0
+antlr4-python3-runtime==4.9.3
 attrs==26.1.0
 certifi==2026.2.25
 charset-normalizer==3.4.7
@@ -11,6 +9,7 @@ cligj==0.7.2
 idna==3.13
 networkx==3.4.2
 numpy==2.4.4
+omegaconf==2.3.0
 pyparsing==3.3.2
 PyYAML==6.0.3
 rasterio==1.4.4

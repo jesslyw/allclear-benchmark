@@ -5,3 +5,6 @@
 [submodule "models/EMRDM"]
 	path = models/EMRDM
 	url = https://github.com/Ly403/EMRDM
+[submodule "models/UnCRtainTS"]
+	path = models/UnCRtainTS
+	url = https://github.com/PatrickTUM/UnCRtainTS

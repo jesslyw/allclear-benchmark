@@ -78,8 +78,10 @@ class BenchmarkRunner:
             return wrappers.LeastCloudy(self.args)
         if name == "mosaicing":
             return wrappers.Mosaicing(self.args)
+        if name == "uncrtaints":
+            return wrappers.UnCRtainTS(self.args)
         raise ValueError(
-            f"Unknown model '{self.args.model_name}'. Available: VPint2, EMRDM, LeastCloudy, Mosaicing")
+            f"Unknown model '{self.args.model_name}'. Available: VPint2, EMRDM, LeastCloudy, Mosaicing, UnCRtainTS")
 
     def _setup_data_loader(self):
         with open(self.args.dataset_fpath, "r", encoding="utf-8") as f:
@@ -97,6 +99,7 @@ class BenchmarkRunner:
             aux_data=self.args.aux_data,
             tx=self.args.tx,
             target_mode=self.args.target_mode,
+            s1_preprocess_mode=self.args.s1_preprocess_mode,
         )
         return DataLoader(dataset, batch_size=self.args.batch_size, shuffle=False, num_workers=self.args.num_workers)
 
@@ -175,6 +178,9 @@ def parse_args():
     parser.add_argument("--main-sensor", type=str,
                         default="s2_toa", help="Main sensor for the dataset")
     parser.add_argument("--aux-sensors", type=str, nargs="*", default=[])
+    parser.add_argument("--s1-preprocess-mode", type=str, default="default",
+                        choices=["default", "uncrtaints"],
+                        help="S1 normalization: 'uncrtaints' for UnCRtainTS model")
     parser.add_argument("--aux-data", type=str, nargs="+",
                         default=["cld_shdw", "dw"])
     # TODO: if s2s, t alignment needed
@@ -191,6 +197,14 @@ def parse_args():
                         default=None, help="Path to EMRDM config YAML")
     parser.add_argument("--emrdm-ckpt-fpath", type=str,
                         default=None, help="Path to EMRDM checkpoint (.ckpt)")
+    parser.add_argument("--uncrtaints-base-path", type=str,
+                        default="models/UnCRtainTS", help="Path to UnCRtainTS repo root")
+    parser.add_argument("--uncrtaints-weight-folder", type=str,
+                        default=None, help="UnCRtainTS weight folder name")
+    parser.add_argument("--uncrtaints-experiment-name", type=str,
+                        default=None, help="UnCRtainTS experiment name")
+    parser.add_argument("--uncrtaints-resume-at", type=int,
+                        default=0, help="UnCRtainTS checkpoint epoch (0 = latest)")
     return parser.parse_args()
 
 

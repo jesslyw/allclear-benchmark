@@ -149,6 +149,89 @@ class VPint2(BaseModel):
         return {"output": output}
 
 
+class UnCRtainTS(BaseModel):
+    # Source:
+    # https://github.com/Zhou-Hangyu/allclear
+    # File: baseline_wrappers.py
+    # Commit: 3db4f86
+    # License: MIT
+    def __init__(self, args):
+        super().__init__(args)
+        uncrtaints_root = Path(__file__).resolve().parent / "models" / "UnCRtainTS"
+        if not uncrtaints_root.exists():
+            raise FileNotFoundError(
+                f"UnCRtainTS submodule not found at {uncrtaints_root}. "
+                "Add it with: git submodule add https://github.com/PatrickTUM/UnCRtainTS models/UnCRtainTS"
+            )
+        sys.path.insert(0, str(uncrtaints_root))
+        sys.path.insert(0, str(uncrtaints_root / "model"))
+        from model.src.model_utils import get_model, load_checkpoint
+        from model.src.utils import str2list
+        from model.parse_args import create_parser
+
+        base_path = Path(getattr(args, "uncrtaints_base_path", str(uncrtaints_root)))
+        weight_folder = args.uncrtaints_weight_folder
+        experiment_name = args.uncrtaints_experiment_name
+        self.experiment_name = experiment_name
+        resume_at = getattr(args, "uncrtaints_resume_at", 0)
+
+        conf_path = base_path / weight_folder / experiment_name / "conf.json"
+        with open(conf_path, "r") as f:
+            model_config = json.load(f)
+
+        parser = create_parser(mode="test")
+        no_overwrite = ["pid", "device", "resume_at", "trained_checkp", "res_dir",
+                        "weight_folder", "root1", "root2", "root3", "max_samples_count",
+                        "batch_size", "display_step", "plot_every", "export_every",
+                        "input_t", "region", "min_cov", "max_cov", "f"]
+        conf_dict = {k: v for k, v in model_config.items() if k not in no_overwrite}
+        conf_dict["resume_at"] = resume_at
+        conf_dict["weight_folder"] = str(base_path / weight_folder)
+        conf_dict["device"] = str(self.device)
+        import argparse as _argparse
+        t_args = _argparse.Namespace(**conf_dict)
+        config, _ = parser.parse_known_args(namespace=t_args)
+        config = str2list(config, ["encoder_widths", "decoder_widths", "out_conv"])
+
+        self.model = get_model(config).to(self.device)
+        ckpt_n = f"_epoch_{resume_at}" if resume_at > 0 else ""
+        load_checkpoint(config, str(base_path / weight_folder), self.model, f"model{ckpt_n}")
+        self.model.eval()
+
+        self.num_input_dims = 13 if "noSAR_1" in experiment_name else 15
+        self.S2_BANDS = 13
+
+    def get_model_config(self):
+        return None
+
+    def preprocess(self, inputs):
+        inputs["input_images"] = inputs["input_images"].to(self.device)
+        inputs["input_cld_shdw"] = inputs["input_cld_shdw"].to(self.device)
+        inputs["input_images"] = inputs["input_images"].permute(0, 2, 1, 3, 4)[:, :, :self.num_input_dims]
+        inputs["input_cld_shdw"] = torch.clip(inputs["input_cld_shdw"].sum(dim=1), 0, 1)
+        # Store under private key to avoid corrupting batch["target"] shape (used by benchmark.py for target_c)
+        inputs["_uc_target"] = inputs["target"].to(self.device).permute(0, 2, 1, 3, 4)[:, :, :self.S2_BANDS]
+        # diagonal_1 was trained with S1 channels first; move them from [13:15] to front
+        if "diagonal_1" in self.experiment_name:
+            inputs["input_images"] = torch.cat(
+                [inputs["input_images"][:, :, -2:], inputs["input_images"][:, :, :-2]], dim=2)
+        return inputs
+
+    def forward(self, inputs):
+        input_imgs = inputs["input_images"]           # (B, T, C, H, W)
+        target_imgs = inputs["_uc_target"]            # (B, 1, 13, H, W)
+        masks = inputs["input_cld_shdw"]              # (B, T, H, W)
+        dates = inputs["time_differences"].to(self.device)  # (B, T)
+        model_inputs = {"A": input_imgs, "B": target_imgs, "dates": dates, "masks": masks}
+
+        with torch.no_grad():
+            self.model.set_input(model_inputs)
+            self.model.forward()
+            self.model.rescale()
+            out = self.model.fake_B[:, :, :self.S2_BANDS]  # (B, T, 13, H, W)
+        return {"output": out}
+
+
 class LeastCloudy(BaseModel):
     # Source: https://github.com/Zhou-Hangyu/allclear (baseline_wrappers.py, MIT License)
     def get_model_config(self):

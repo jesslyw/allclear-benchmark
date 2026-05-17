@@ -45,6 +45,27 @@ This will:
 
 Thresholds used for filtering can be configured at the top of `setup/setup.sh`.
 
+## Metrics
+
+Standard cloud removal metrics:
+
+| Metric | Description                   |
+| ------ | ----------------------------- |
+| MAE    | Mean absolute pixel error     |
+| RMSE   | Root mean squared pixel error |
+| PSNR   | Peak signal-to-noise ratio    |
+| SAM    | Spectral angle mapper         |
+| SSIM   | Structural similarity         |
+
+Downstream application metrics:
+
+| Metric   | Description                                                                                                                             |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| NDVI-MAE | Error in [Normalized Difference Vegetation Index](https://www.usgs.gov/landsat-missions/landsat-normalized-difference-vegetation-index) |
+| NBR-MAE  | Error in [Normalized Burn Ratio](https://www.usgs.gov/landsat-missions/landsat-normalized-burn-ratio)                                   |
+
+Because NDVI and NBR are based on relationships between specific spectral bands, they may detect changes that are not always visible in standard pixel-by-pixel comparisons
+
 ## Run benchmark
 
 **Quick test (single ROI):**

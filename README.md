@@ -29,7 +29,7 @@ No environment activation is needed after this - use `run.py` for all models.
 
 ## Setup
 
-Filters the AllClear test set to a subset compatible with VPint2's input requirements. See docs/methodology.md for the filtering criteria.
+Filters the AllClear test set to a subset compatible with VPint2's input requirements. See [methodology.md](docs/methodology.md) for the filtering criteria.
 
 Run from the repo root:
 

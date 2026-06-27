@@ -15,32 +15,38 @@ import argparse
 BASE_URL = "http://allclear.cs.cornell.edu/dataset/allclear"
 CHUNK_SIZE = 8192
 
-def download_file(url, dest_path, show_progress=True):
-    """Download a file with progress bar and return success status"""
-    try:
-        response = requests.get(url, stream=True)
-        if response.status_code == 404:
-            return False
+def download_file(url, dest_path, show_progress=True, retries=5, timeout=60):
+    """Download a file with progress bar. Returns True on success, None on 404, False on error."""
+    for attempt in range(1, retries + 1):
+        try:
+            response = requests.get(url, stream=True, timeout=timeout)
+            if response.status_code == 404:
+                return None
 
-        total_size = int(response.headers.get("content-length", 0))
+            total_size = int(response.headers.get("content-length", 0))
 
-        with open(dest_path, "wb") as f:
-            if show_progress:
-                with tqdm(total=total_size, unit='B', unit_scale=True, desc=dest_path.name) as pbar:
+            with open(dest_path, "wb") as f:
+                if show_progress:
+                    with tqdm(total=total_size, unit='B', unit_scale=True, desc=dest_path.name) as pbar:
+                        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                            if chunk:
+                                f.write(chunk)
+                                pbar.update(len(chunk))
+                else:
                     for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                         if chunk:
                             f.write(chunk)
-                            pbar.update(len(chunk))
+            return True
+        except Exception as e:
+            if dest_path.exists():
+                dest_path.unlink()
+            if attempt < retries:
+                wait = 2 ** attempt
+                print(f"Error downloading {url}: {e} — retrying in {wait}s (attempt {attempt}/{retries})")
+                time.sleep(wait)
             else:
-                for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-                    if chunk:
-                        f.write(chunk)
-        return True
-    except Exception as e:
-        print(f"Error downloading {url}: {e}")
-        if dest_path.exists():
-            dest_path.unlink()
-        return False
+                print(f"Error downloading {url}: {e} — giving up after {retries} attempts")
+    return False
 
 def verify_file(file_path):
     """Verify if file is complete by trying to open it"""
@@ -63,7 +69,9 @@ def download_metadata():
     print(f"Downloading metadata from {url} to {dest_path}")
     success = download_file(url, dest_path)
 
-    if success and verify_file(dest_path):
+    if success is None:
+        print(f"Skipping {filename} - not found on server")
+    elif success and verify_file(dest_path):
         # Extract the tar.gz file
         try:
             import tarfile
@@ -88,7 +96,7 @@ def download_metadata():
         print(f"Downloaded {filename} but verification failed")
         dest_path.unlink()
     else:
-        print(f"Skipping {filename} - not found on server")
+        print(f"Failed to download {filename} after retries - check connection")
 
 
 def load_roi_list():
@@ -129,7 +137,9 @@ def download_roi_worker(roi_batch):
         success = download_file(url, dest_path, show_progress=False)
         time.sleep(0.1)
 
-        if success and verify_file(dest_path):
+        if success is None:
+            print(f"Skipping {filename} - not found on server")
+        elif success and verify_file(dest_path):
             # Extract the tar.gz file
             try:
                 import tarfile
@@ -146,7 +156,7 @@ def download_roi_worker(roi_batch):
             print(f"Downloaded {filename} but verification failed")
             dest_path.unlink()
         else:
-            print(f"Skipping {filename} - not found on server")
+            print(f"Failed to download {filename} after retries - check connection")
 
 def main():
     # Add argument parser

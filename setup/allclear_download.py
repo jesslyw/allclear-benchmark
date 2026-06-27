@@ -87,6 +87,16 @@ def _remove_incomplete_roi_folders(roi_ids):
             shutil.rmtree(roi_dir)
 
 
+def _read_roi_file(roi_file):
+    """Read ROI IDs from a text file, one per line. Blank lines are ignored."""
+    path = Path(roi_file)
+    if not path.exists():
+        print(f"Warning: {roi_file} not found")
+        return []
+    with path.open("r", encoding="utf-8") as f:
+        return sorted({line.strip() for line in f if line.strip()})
+
+
 def download_selected_rois(
     roi_ids=None,
     cpus=8,
@@ -148,6 +158,13 @@ def main():
         help="Download one or more ROIs (e.g., --roi-id roi801784 roi123456)",
     )
     parser.add_argument(
+        "--roi-file",
+        type=str,
+        default=None,
+        help="Download the ROIs listed in this file (one ROI ID per line), "
+             "e.g. a candidate list from the filter --screen mode",
+    )
+    parser.add_argument(
         "--dataset-fpath",
         type=str,
         nargs="+",
@@ -170,8 +187,11 @@ def main():
         download_metadata()
         rewrite_metadata_paths()
         return
+    roi_ids = args.roi_id
+    if args.roi_file:
+        roi_ids = _read_roi_file(args.roi_file)
     download_selected_rois(
-        roi_ids=args.roi_id,
+        roi_ids=roi_ids,
         cpus=args.cpus,
         skip_metadata=args.skip_metadata,
         dataset_fpaths=args.dataset_fpath,

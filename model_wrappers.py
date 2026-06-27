@@ -50,6 +50,7 @@ class VPint2(BaseModel):
                 "Add it under models/VPint2 first."
             )
         sys.path.append(str(vpint_root))
+        # variables based on vpint2 readme
         from VPint.WP_MRP import WP_SMRP
         self.WP_SMRP = WP_SMRP
         self.clip_val = 1.0  # dataset.py normalizes optical channels to [0, 1]
@@ -74,7 +75,7 @@ class VPint2(BaseModel):
         return value
 
     def preprocess(self, inputs):
-        # DataLoader adds B:
+        # DataLoader adds B (batch):
         # inputs["input_images"]:   (B, C, T, H, W)
         # inputs["target"]:         (B, C, 1, H, W) for s2p
         # inputs["input_cld_shdw"]: (B, 2, T, H, W)
@@ -82,7 +83,7 @@ class VPint2(BaseModel):
         m = inputs["input_cld_shdw"]
 
         batch_items = []
-        # B = batch, vpint2 runs with size=1 (how many samples per run)
+        # B = batch, vpint2 runs with size=1 (number of samples per run)
         B, C, T, H, W = x.shape
 
         for b in range(B):
@@ -98,9 +99,10 @@ class VPint2(BaseModel):
                 continue
 
             masks = m[b].sum(dim=0) > 0
+            # picks the cloudy index from all 3 and permute to numpy (H, W, C)
             cloudy = x[b, :, t_cloudy].permute(1, 2, 0).cpu().numpy()
             feature = x[b, :, t_ref].permute(1, 2, 0).cpu().numpy()
-            mask_2d = masks[t_cloudy].cpu().numpy()
+            mask_2d = masks[t_cloudy].cpu().numpy()  # cloudy img mask
 
             # VPint2 expects cloudy pixels as NaN so they can later be filled
             cloudy = cloudy.copy()
@@ -157,7 +159,8 @@ class UnCRtainTS(BaseModel):
     # License: MIT
     def __init__(self, args):
         super().__init__(args)
-        uncrtaints_root = Path(__file__).resolve().parent / "models" / "UnCRtainTS"
+        uncrtaints_root = Path(__file__).resolve(
+        ).parent / "models" / "UnCRtainTS"
         if not uncrtaints_root.exists():
             raise FileNotFoundError(
                 f"UnCRtainTS submodule not found at {uncrtaints_root}. "
@@ -169,7 +172,8 @@ class UnCRtainTS(BaseModel):
         from model.src.utils import str2list
         from model.parse_args import create_parser
 
-        base_path = Path(getattr(args, "uncrtaints_base_path", str(uncrtaints_root)))
+        base_path = Path(
+            getattr(args, "uncrtaints_base_path", str(uncrtaints_root)))
         weight_folder = args.uncrtaints_weight_folder
         experiment_name = args.uncrtaints_experiment_name
         self.experiment_name = experiment_name
@@ -184,18 +188,21 @@ class UnCRtainTS(BaseModel):
                         "weight_folder", "root1", "root2", "root3", "max_samples_count",
                         "batch_size", "display_step", "plot_every", "export_every",
                         "input_t", "region", "min_cov", "max_cov", "f"]
-        conf_dict = {k: v for k, v in model_config.items() if k not in no_overwrite}
+        conf_dict = {k: v for k, v in model_config.items()
+                     if k not in no_overwrite}
         conf_dict["resume_at"] = resume_at
         conf_dict["weight_folder"] = str(base_path / weight_folder)
         conf_dict["device"] = str(self.device)
         import argparse as _argparse
         t_args = _argparse.Namespace(**conf_dict)
         config, _ = parser.parse_known_args(namespace=t_args)
-        config = str2list(config, ["encoder_widths", "decoder_widths", "out_conv"])
+        config = str2list(
+            config, ["encoder_widths", "decoder_widths", "out_conv"])
 
         self.model = get_model(config).to(self.device)
         ckpt_n = f"_epoch_{resume_at}" if resume_at > 0 else ""
-        load_checkpoint(config, str(base_path / weight_folder), self.model, f"model{ckpt_n}")
+        load_checkpoint(config, str(base_path / weight_folder),
+                        self.model, f"model{ckpt_n}")
         self.model.eval()
 
         self.num_input_dims = 13 if "noSAR_1" in experiment_name else 15
@@ -207,10 +214,13 @@ class UnCRtainTS(BaseModel):
     def preprocess(self, inputs):
         inputs["input_images"] = inputs["input_images"].to(self.device)
         inputs["input_cld_shdw"] = inputs["input_cld_shdw"].to(self.device)
-        inputs["input_images"] = inputs["input_images"].permute(0, 2, 1, 3, 4)[:, :, :self.num_input_dims]
-        inputs["input_cld_shdw"] = torch.clip(inputs["input_cld_shdw"].sum(dim=1), 0, 1)
+        inputs["input_images"] = inputs["input_images"].permute(
+            0, 2, 1, 3, 4)[:, :, :self.num_input_dims]
+        inputs["input_cld_shdw"] = torch.clip(
+            inputs["input_cld_shdw"].sum(dim=1), 0, 1)
         # Store under private key to avoid corrupting batch["target"] shape (used by benchmark.py for target_c)
-        inputs["_uc_target"] = inputs["target"].to(self.device).permute(0, 2, 1, 3, 4)[:, :, :self.S2_BANDS]
+        inputs["_uc_target"] = inputs["target"].to(self.device).permute(0, 2, 1, 3, 4)[
+            :, :, :self.S2_BANDS]
         # diagonal_1 was trained with S1 channels first; move them from [13:15] to front
         if "diagonal_1" in self.experiment_name:
             inputs["input_images"] = torch.cat(
@@ -222,7 +232,8 @@ class UnCRtainTS(BaseModel):
         target_imgs = inputs["_uc_target"]            # (B, 1, 13, H, W)
         masks = inputs["input_cld_shdw"]              # (B, T, H, W)
         dates = inputs["time_differences"].to(self.device)  # (B, T)
-        model_inputs = {"A": input_imgs, "B": target_imgs, "dates": dates, "masks": masks}
+        model_inputs = {"A": input_imgs, "B": target_imgs,
+                        "dates": dates, "masks": masks}
 
         with torch.no_grad():
             self.model.set_input(model_inputs)
@@ -271,6 +282,13 @@ class Mosaicing(BaseModel):
 class EMRDM(BaseModel):
     def __init__(self, args):
         super().__init__(args)
+        pairs_fpath = getattr(args, "emrdm_pairs_fpath", None)
+        if pairs_fpath:
+            with open(pairs_fpath, "r", encoding="utf-8") as f:
+                self.pairs = json.load(f)
+        else:
+            self.pairs = None
+        self._logged_first_batch = False
         emrdm_root = Path(__file__).resolve().parent / "models" / "EMRDM"
         if not emrdm_root.exists():
             raise FileNotFoundError(
@@ -283,7 +301,13 @@ class EMRDM(BaseModel):
         config = OmegaConf.load(args.emrdm_config_fpath)
         self.model = instantiate_from_config(config.model)
         ckpt = torch.load(args.emrdm_ckpt_fpath, map_location="cpu")
-        self.model.load_state_dict(ckpt["state_dict"], strict=False)
+        result = self.model.load_state_dict(ckpt["state_dict"], strict=False)
+        print(
+            f"[EMRDM] Checkpoint loaded — missing: {len(result.missing_keys)}, unexpected: {len(result.unexpected_keys)}")
+        if result.missing_keys:
+            print(f"[EMRDM] First 5 missing:    {result.missing_keys[:5]}")
+        if result.unexpected_keys:
+            print(f"[EMRDM] First 5 unexpected: {result.unexpected_keys[:5]}")
         self.model.eval().to(self.device)
         self.model.sampler.device = str(self.device)
 
@@ -303,20 +327,46 @@ class EMRDM(BaseModel):
         s1 = x[:, 13:15]  # (B, 2,  T, H, W)
         m = inputs["input_cld_shdw"].to(self.device)  # (B, 2, T, H, W)
 
-        cloud_frac = m.sum(dim=1).mean(dim=(-1, -2))  # (B, T)
-        t_ref = cloud_frac.argmin(dim=1)              # (B,)
-        t_cloudy = cloud_frac.argmax(dim=1)           # (B,)
+        if self.pairs is not None:
+            data_ids = inputs["data_id"] if isinstance(inputs["data_id"], (list, tuple)) \
+                else [inputs["data_id"]]
+            indices = [self.pairs[did]["s2_index"] for did in data_ids]
+            t_cloudy = torch.tensor(
+                indices, dtype=torch.long, device=self.device)
+        else:
+            # pick the highest cloud coverage as fallback
+            cloud_frac = m.sum(dim=1).mean(dim=(-1, -2))
+            t_cloudy = cloud_frac.argmax(dim=1)
 
-        ref_s2 = self._gather_t(s2, t_ref)       # (B, 13, H, W)
         cloudy_s2 = self._gather_t(s2, t_cloudy)  # (B, 13, H, W)
+
         s1_frame = self._gather_t(s1, t_cloudy)   # (B, 2,  H, W)
+        if s1_frame.eq(1.0).all():
+            print(
+                f"[EMRDM] No S1 at matched timestep for {inputs.get('data_id')} — skipping.")
+            return {"skip_batch": True}
 
         def scale(x): return x * 2.0 - 1.0
 
-        S1S2 = torch.cat([scale(s1_frame), scale(cloudy_s2)], dim=1)  # (B, 15, H, W): S1 first, then cloudy S2 (matches SEN12MS-CR training order)
+        # AllClear normalizes S1 VV with [-25, 0] dB range (matches SEN12MS-CR),
+        # but VH with [-32.5, 0] dB range. Re-normalize VH to SEN12MS-CR's [-25, 0].
+        s1_sen12ms = s1_frame.clone()
+        s1_sen12ms[:, 1] = (
+            (s1_frame[:, 1] * 32.5 - 32.5).clamp(-25.0, 0.0) + 25.0) / 25.0
 
-        # sentinel.yaml uses "S2" as mean_key and "S1S2" as conditioner input_key
-        return {"emrdm_batch": {"S1S2": S1S2, "S2": scale(ref_s2)},
+        if not self._logged_first_batch:
+            print(f"[EMRDM] s1_frame (raw [0,1]): VV [{s1_frame[:, 0].min():.3f}, {s1_frame[:, 0].max():.3f}] mean={s1_frame[:, 0].mean():.3f}  VH [{s1_frame[:, 1].min():.3f}, {s1_frame[:, 1].max():.3f}] mean={s1_frame[:, 1].mean():.3f}")
+            print(f"[EMRDM] s1_sen12ms (after VH renorm): VV [{s1_sen12ms[:, 0].min():.3f}, {s1_sen12ms[:, 0].max():.3f}] mean={s1_sen12ms[:, 0].mean():.3f}  VH [{s1_sen12ms[:, 1].min():.3f}, {s1_sen12ms[:, 1].max():.3f}] mean={s1_sen12ms[:, 1].mean():.3f}")
+
+        # (B, 15, H, W): S1 first, then cloudy S2 (matches SEN12MS-CR training order)
+        S1S2 = torch.cat([scale(s1_sen12ms), scale(cloudy_s2)], dim=1)
+        if getattr(self.args, "emrdm_no_s1", False):
+            # zero S1 channels in [-1,1] space (model's own null signal)
+            S1S2[:, :2] = 0.0
+
+        # sentinel.yaml uses "S2" as mean_key (= cloudy input, diffusion starting point)
+        # and "S1S2" as conditioner input_key. Training data: S2=cloudy, target=clean.
+        return {"emrdm_batch": {"S1S2": S1S2, "S2": scale(cloudy_s2)},
                 "t_cloudy": t_cloudy}
 
     def forward(self, inputs):
@@ -327,9 +377,16 @@ class EMRDM(BaseModel):
             )
             B = batch["S2"].shape[0]
             z_mu = self.model.encode_first_stage(batch["S2"])
-            samples, _ = self.model.sample(
-                c, z_mu, shape=z_mu.shape[1:], uc=uc, batch_size=B
-            )
+            with self.model.ema_scope("Inference"):
+                samples, _ = self.model.sample(
+                    c, z_mu, shape=z_mu.shape[1:], uc=uc, batch_size=B
+                )
             out = self.model.decode_first_stage(samples)
         out_01 = ((out + 1.0) / 2.0).clamp(0.0, 1.0)
+        mu_01 = ((batch["S2"] + 1.0) / 2.0).clamp(0.0, 1.0)
+        if not self._logged_first_batch:
+            print(f"[EMRDM] samples range: [{samples.min():.3f}, {samples.max():.3f}]  mean={samples.mean():.3f}")
+            print(f"[EMRDM] out_01 range:  [{out_01.min():.3f}, {out_01.max():.3f}]  mean={out_01.mean():.3f}")
+            print(f"[EMRDM] mu (cloudy) range: [{mu_01.min():.3f}, {mu_01.max():.3f}]  mean={mu_01.mean():.3f}")
+            self._logged_first_batch = True
         return {"output": out_01.unsqueeze(2)}  # (B, 13, 1, H, W)

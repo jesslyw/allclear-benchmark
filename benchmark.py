@@ -100,6 +100,7 @@ class BenchmarkRunner:
             tx=self.args.tx,
             target_mode=self.args.target_mode,
             s1_preprocess_mode=self.args.s1_preprocess_mode,
+            max_diff=self.args.s1_max_diff,
         )
         return DataLoader(dataset, batch_size=self.args.batch_size, shuffle=False, num_workers=self.args.num_workers)
 
@@ -181,6 +182,8 @@ def parse_args():
     parser.add_argument("--s1-preprocess-mode", type=str, default="default",
                         choices=["default", "uncrtaints"],
                         help="S1 normalization: 'uncrtaints' for UnCRtainTS model")
+    parser.add_argument("--s1-max-diff", type=int, default=2,
+                        help="Max days between S1 and S2 acquisition for temporal alignment (default: 2)")
     parser.add_argument("--aux-data", type=str, nargs="+",
                         default=["cld_shdw", "dw"])
     # TODO: if s2s, t alignment needed
@@ -197,6 +200,10 @@ def parse_args():
                         default=None, help="Path to EMRDM config YAML")
     parser.add_argument("--emrdm-ckpt-fpath", type=str,
                         default=None, help="Path to EMRDM checkpoint (.ckpt)")
+    parser.add_argument("--emrdm-pairs-fpath", type=str,
+                        default=None, help="Path to emrdm_pairs.json (pre-selected S2 frame indices)")
+    parser.add_argument("--emrdm-no-s1", action="store_true",
+                        help="Zero out S1 channels (ablation: measure benefit of SAR conditioning)")
     parser.add_argument("--uncrtaints-base-path", type=str,
                         default="models/UnCRtainTS", help="Path to UnCRtainTS repo root")
     parser.add_argument("--uncrtaints-weight-folder", type=str,

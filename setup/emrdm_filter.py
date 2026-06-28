@@ -1,24 +1,11 @@
-"""
-Keep only the AllClear test samples that EMRDM can run on.
+"""Keep only the AllClear test samples that EMRDM can run on.
 
-A sample is kept if:
-  1. It has at least one S1 image.
-  2. It has at least one S2 frame that is 20-70% cloud/shadow.
-  3. We then pick the S2 frame closest in time to an S1 image.
+A sample is kept if it has an S1 image and an S2 frame that is 20-70%
+cloud/shadow; we pair that frame with the closest S1 in time. Cloud/shadow %
+is the fraction of pixels that are cloud OR shadow (mask bands 2 and 5, NaN
+counts as covered), matching benchmark.py. Needs the mask files downloaded.
 
-How we measure cloud/shadow: each frame has a mask with a cloud band and a
-shadow band. A pixel counts as covered if it is cloud OR shadow (band 2 or
-band 5). We count those pixels and divide by all pixels. This is the same
-rule benchmark.py uses when scoring, so our numbers match. Missing (NaN)
-pixels count as covered. Needs the mask files to be downloaded first.
-
-Outputs:
-  emrdm_pairs.json   - the chosen frames per sample
-  emrdm_samples.json - the kept samples in AllClear format
-
-Usage:
-  python setup/emrdm_filter.py \
-      --metadata-json metadata/datasets/test_tx3_s2-s1_100pct_1proi.json
+Outputs emrdm_pairs.json (chosen frames) and emrdm_samples.json (kept samples).
 """
 
 import argparse
@@ -33,7 +20,7 @@ from tqdm import tqdm
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# Mask bands (1-indexed, as read by rasterio) — see dataset.py channels["cld_shdw"].
+# Mask bands, see dataset.py channels["cld_shdw"].
 CLOUD_BAND = 2
 SHADOW_BAND = 5
 
@@ -45,11 +32,7 @@ def parse_dt(value):
 
 
 def frame_occlusion(s2_fpath):
-    """How much of one S2 frame is covered by cloud or shadow (0 to 1).
-
-    Opens the frame's mask and counts pixels that are cloud OR shadow.
-    NaN pixels count as covered. Returns None if the mask isn't downloaded.
-    """
+    """Cloud/shadow fraction (0-1) of one S2 frame, or None if no mask."""
     if s2_fpath in _occlusion_cache:
         return _occlusion_cache[s2_fpath]
     mask_fpath = s2_fpath.replace("s2_toa", "cld_shdw")
@@ -67,12 +50,7 @@ def frame_occlusion(s2_fpath):
 
 
 def load_csv_bounds(csv_path):
-    """Read s2_metadata.csv and give back the cloud/shadow % for each frame.
-
-    Used by --screen mode so we don't have to open the mask files. We can't
-    get the exact covered % from the two numbers, but it has to be between
-    max(cloud, shadow) and (cloud + shadow). Bad rows are skipped.
-    """
+    """Cloud/shadow % per frame from s2_metadata.csv (for --screen)."""
     import csv as _csv
     bounds = {}
     with open(csv_path, "r", encoding="utf-8") as f:
@@ -90,12 +68,7 @@ def load_csv_bounds(csv_path):
 
 
 def screen_emrdm(sample, csv_bounds, min_cloud=0.20, max_cloud=0.70):
-    """Guess if a sample could be EMRDM-eligible from the CSV alone.
-
-      "skip"      - no chance (no S1, or no frame can land in the window)
-      "eligible"  - at least one frame is surely inside the window
-      "uncertain" - a frame might be inside, need the mask to be sure
-    """
+    """CSV-only guess: "skip", "eligible", or "uncertain"."""
     if not sample.get("s1"):
         return "skip"
     roi = sample["roi"][0]
@@ -108,7 +81,7 @@ def screen_emrdm(sample, csv_bounds, min_cloud=0.20, max_cloud=0.70):
         floor = max(v[0], v[1])
         ceil = min(v[0] + v[1], 1.0)
         if ceil < min_cloud or floor > max_cloud:
-            continue  # this frame can't be in the window
+            continue
         if floor >= min_cloud and ceil <= max_cloud:
             has_accept = True
         else:
@@ -120,22 +93,37 @@ def screen_emrdm(sample, csv_bounds, min_cloud=0.20, max_cloud=0.70):
     return "skip"
 
 
-def find_emrdm_pair(sample, min_cloud=0.20, max_cloud=0.70):
-    """Pick the best (S2, S1) pair for a sample, or None if none fits.
+def mean_eligible_occlusion(dataset, min_cloud=0.20, max_cloud=0.70):
+    """Mean cloud/shadow % over all eligible frames, or None."""
+    occlusions = []
+    for sample in dataset.values():
+        for _, s2_fpath in sample.get("s2_toa", []):
+            occ = frame_occlusion(s2_fpath)
+            if occ is None:
+                continue
+            if min_cloud <= occ <= max_cloud:
+                occlusions.append(occ)
+    if not occlusions:
+        return None
+    return float(np.mean(occlusions))
 
-    Look at every S2 frame in the 20-70% window, match it to the nearest S1
-    in time, and keep the pair with the smallest time gap. Ties go to the
-    frame with more cloud/shadow.
+
+def find_emrdm_pair(sample, min_cloud=0.20, max_cloud=0.70, target_occlusion=None):
+    """Best (S2, S1) pair for a sample. Returns (pair, tie).
+
+    Smallest S2-S1 time gap wins; ties go to the frame closest to
+    target_occlusion (or most cloud/shadow if no target). pair is None if no
+    frame fits; tie is True when 2+ frames shared the smallest gap.
     """
     s2_entries = sample.get("s2_toa", [])
     s1_entries = sample.get("s1", [])
 
     if not s1_entries:
-        return None
+        return None, False
 
     s1_dts = [parse_dt(ts) for ts, _ in s1_entries]
 
-    best = None
+    candidates = []
 
     for s2_idx, (s2_ts, s2_fpath) in enumerate(s2_entries):
         occlusion = frame_occlusion(s2_fpath)
@@ -146,30 +134,35 @@ def find_emrdm_pair(sample, min_cloud=0.20, max_cloud=0.70):
 
         s2_dt = parse_dt(s2_ts)
 
-        # nearest S1 in time to this S2 frame
+        # nearest S1 in time
         s1_gaps = [abs((s2_dt - s1_dt).days) for s1_dt in s1_dts]
         best_s1_idx = min(range(len(s1_gaps)), key=lambda i: s1_gaps[i])
         delta_days = s1_gaps[best_s1_idx]
 
-        candidate = {
+        candidates.append({
             "s2_index": s2_idx,
             "s1_index": best_s1_idx,
             "s2_occlusion_pct": round(occlusion, 4),
             "s2_s1_delta_days": delta_days,
-        }
+        })
 
-        if best is None:
-            best = candidate
-            continue
+    if not candidates:
+        return None, False
 
-        # smaller time gap wins, then more cloud/shadow
-        def score(c):
+    # smaller time gap wins, then closest to the mean (or most cloud/shadow)
+    def score(c):
+        if target_occlusion is None:
             return (c["s2_s1_delta_days"], -c["s2_occlusion_pct"])
+        return (c["s2_s1_delta_days"],
+                abs(c["s2_occlusion_pct"] - target_occlusion))
 
-        if score(candidate) < score(best):
-            best = candidate
+    best = min(candidates, key=score)
 
-    return best
+    # tie: 2+ frames shared the smallest gap, so the second criterion decided
+    min_gap = best["s2_s1_delta_days"]
+    tie = sum(1 for c in candidates if c["s2_s1_delta_days"] == min_gap) > 1
+
+    return best, tie
 
 
 def main():
@@ -242,17 +235,26 @@ def main():
         print(f"[screen] wrote candidate ROI list to {args.candidates_out}")
         return
 
+    # tie-break target
+    target = mean_eligible_occlusion(dataset, args.min_cloud, args.max_cloud)
+    if target is not None:
+        print(f"Mean cloud/shadow % of eligible frames: {target:.4f}")
+
     pairs = {}
+    tie_count = 0
     for sample_id, sample in tqdm(dataset.items(), desc="Filtering"):
         if not sample.get("s2_toa") or not sample.get("target"):
             continue
-        pair = find_emrdm_pair(
+        pair, tie = find_emrdm_pair(
             sample,
             min_cloud=args.min_cloud,
             max_cloud=args.max_cloud,
+            target_occlusion=target,
         )
         if pair is not None:
             pairs[sample_id] = pair
+            if tie:
+                tie_count += 1
 
     missing = sum(1 for v in _occlusion_cache.values() if v is None)
     if missing:
@@ -271,6 +273,10 @@ def main():
     print(f"Saved {len(samples_subset)} samples to {args.data_out}")
     print(
         f"Eligible: {len(pairs)}/{len(dataset)} ({len(pairs)/len(dataset)*100:.1f}%)")
+    if pairs:
+        print(
+            f"Tie-break decided the frame for {tie_count}/{len(pairs)} samples "
+            f"({tie_count/len(pairs)*100:.1f}%)")
 
 
 if __name__ == "__main__":

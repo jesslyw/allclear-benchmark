@@ -6,7 +6,5 @@ metadata/
 data/
 skills-lock.json
 helper_scripts/
-setup/vpint2_pairs.json
-setup/vpint2_samples.json
 setup/index.json
 pred_vs_target/index.json

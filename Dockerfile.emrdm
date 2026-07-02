@@ -26,6 +26,8 @@ COPY requirements-emrdm.txt /opt/setup/requirements-emrdm.txt
 ENV CUDA_HOME=/usr/local/cuda
 
 RUN python3.10 -m pip install --upgrade pip setuptools==69.5.1 wheel packaging ninja
+RUN python3.10 -m pip install --index-url https://download.pytorch.org/whl/cu121 \
+    torch==2.2.1+cu121 torchvision==0.17.1+cu121 torchaudio==2.2.1+cu121
 RUN python3.10 -m pip install -r /opt/setup/requirements-emrdm.txt --extra-index-url https://download.pytorch.org/whl/cu121
 RUN python3.10 -m pip install flash_attn==2.5.9.post1 --no-build-isolation
 RUN python3.10 -m pip install "natten==0.17.1+torch220cu121" -f https://shi-labs.com/natten/wheels

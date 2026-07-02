@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-dev \
     build-essential \
+    ninja-build \
     git \
     ca-certificates \
     libgl1 \
@@ -22,7 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /opt/setup
 COPY requirements-emrdm.txt /opt/setup/requirements-emrdm.txt
 
-RUN python3.10 -m pip install --upgrade pip setuptools==69.5.1 wheel
+ENV CUDA_HOME=/usr/local/cuda
+
+RUN python3.10 -m pip install --upgrade pip setuptools==69.5.1 wheel packaging ninja
 RUN python3.10 -m pip install -r /opt/setup/requirements-emrdm.txt --extra-index-url https://download.pytorch.org/whl/cu121
 RUN python3.10 -m pip install flash_attn==2.5.9.post1 --no-build-isolation
 RUN python3.10 -m pip install "natten==0.17.1+torch220cu121" -f https://shi-labs.com/natten/wheels

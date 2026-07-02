@@ -87,8 +87,9 @@ echo "      pairs:   $EMRDM_PAIRS_FPATH"
 docker run --rm --gpus all \
   -v "$ROOT_DIR":/workspace \
   -w /workspace \
+  --entrypoint python3.10 \
   "$IMAGE" \
-  python3.10 benchmark.py \
+  benchmark.py \
     --dataset-fpath "$EFFECTIVE_DATASET_FPATH" \
     --model-name EMRDM \
     --device cuda \

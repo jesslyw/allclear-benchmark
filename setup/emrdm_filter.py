@@ -134,16 +134,20 @@ def find_emrdm_pair(sample, min_cloud=0.20, max_cloud=0.70, target_occlusion=Non
 
         s2_dt = parse_dt(s2_ts)
 
-        # nearest S1 in time
-        s1_gaps = [abs((s2_dt - s1_dt).days) for s1_dt in s1_dts]
-        best_s1_idx = min(range(len(s1_gaps)), key=lambda i: s1_gaps[i])
-        delta_days = s1_gaps[best_s1_idx]
+        # nearest S1 in time (precise timestamp gap, not integer day bins)
+        s1_gaps_seconds = [abs((s2_dt - s1_dt).total_seconds())
+                           for s1_dt in s1_dts]
+        best_s1_idx = min(range(len(s1_gaps_seconds)),
+                          key=lambda i: s1_gaps_seconds[i])
+        delta_seconds = s1_gaps_seconds[best_s1_idx]
+        delta_days = delta_seconds / 86400.0
 
         candidates.append({
             "s2_index": s2_idx,
             "s1_index": best_s1_idx,
             "s2_occlusion_pct": round(occlusion, 4),
-            "s2_s1_delta_days": delta_days,
+            "s2_s1_delta_days": round(delta_days, 6),
+            "s2_s1_delta_seconds": int(delta_seconds),
         })
 
     if not candidates:
@@ -152,15 +156,15 @@ def find_emrdm_pair(sample, min_cloud=0.20, max_cloud=0.70, target_occlusion=Non
     # smaller time gap wins, then closest to the mean (or most cloud/shadow)
     def score(c):
         if target_occlusion is None:
-            return (c["s2_s1_delta_days"], -c["s2_occlusion_pct"])
-        return (c["s2_s1_delta_days"],
+            return (c["s2_s1_delta_seconds"], -c["s2_occlusion_pct"])
+        return (c["s2_s1_delta_seconds"],
                 abs(c["s2_occlusion_pct"] - target_occlusion))
 
     best = min(candidates, key=score)
 
     # tie: 2+ frames shared the smallest gap, so the second criterion decided
-    min_gap = best["s2_s1_delta_days"]
-    tie = sum(1 for c in candidates if c["s2_s1_delta_days"] == min_gap) > 1
+    min_gap = best["s2_s1_delta_seconds"]
+    tie = sum(1 for c in candidates if c["s2_s1_delta_seconds"] == min_gap) > 1
 
     return best, tie
 

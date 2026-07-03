@@ -17,12 +17,15 @@ uv pip install -r requirements.txt
 uv venv emrdm --python 3.10
 source emrdm/bin/activate
 uv pip install "setuptools==69.5.1"
-uv pip install -r requirements_emrdm.txt
+uv pip install -r requirements-emrdm.txt --index-url https://download.pytorch.org/whl/cu121
+uv pip install flash_attn==2.5.9.post1 --no-build-isolation
+# natten wheel (torch2.2 + cu121)
+uv pip install "natten==0.17.1+torch220cu121" -f https://shi-labs.com/natten/wheels
 
 # UnCRtainTS
 uv venv uncrtaints --python 3.13
 source uncrtaints/bin/activate
-uv pip install -r requirements_uncrtaints.txt
+uv pip install -r requirements-uncrtaints.txt
 ```
 
 No environment activation is needed after this - use `run.py` for all models.

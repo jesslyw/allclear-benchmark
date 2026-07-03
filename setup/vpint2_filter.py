@@ -10,6 +10,9 @@ from tqdm import tqdm
 
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+MAX_REF_CLOUD = 0.10
+MAX_TARGET_GAP_DAYS = 10
+CSV_BOUNDS_PATH = "metadata/data/s2_metadata.csv"
 
 # Mask bands (1-indexed, as read by rasterio) — see dataset.py channels["cld_shdw"].
 CLOUD_BAND = 2
@@ -23,13 +26,12 @@ def string_to_datetime(value):
 
 
 def frame_occlusion(s2_fpath):
-    """Fraction of pixels occluded by cloud OR shadow for one S2 frame.
+    """Return how much of one S2 frame is covered by cloud or shadow.
 
-    Reads the frame's cld_shdw mask and returns the union (cloud | shadow)
-    fraction in [0, 1], matching benchmark.py's valid-pixel definition
-    (`~((cloud + shadow) > 0)`); the two masks are unioned per pixel, not added
-    as separate percentages. NaN pixels are treated as occluded. Returns None if
-    the mask file is not available locally.
+    We read the matching cld_shdw mask and mark a pixel as occluded if cloud
+    or shadow is present. The result is a fraction between 0 and 1. NaN values
+    are treated as occluded pixels. If the mask file is missing locally,
+    returns None.
     """
     if s2_fpath in _occlusion_cache:
         return _occlusion_cache[s2_fpath]
@@ -48,12 +50,10 @@ def frame_occlusion(s2_fpath):
 
 
 def load_csv_bounds(csv_path):
-    """Read s2_metadata.csv and give back the cloud/shadow % for each frame.
+    """Read cloud/shadow percentages from s2_metadata.csv.
 
-    We use this in --screen mode so we don't have to open the mask files.
-    We can't know the real cloud+shadow union from the two numbers, but it
-    has to be somewhere between max(cloud, shadow) and (cloud + shadow).
-    Rows with missing or negative values are just skipped.
+    Returns {(roi, capture_date): (cloud_frac, shadow_frac)} and skips rows
+    with missing or invalid values.
     """
     import csv as _csv
     bounds = {}
@@ -71,53 +71,58 @@ def load_csv_bounds(csv_path):
     return bounds
 
 
-def screen_vpint2(sample, csv_bounds, max_ref_cloud=0.10):
-    """Quick check if a sample could be VPint2-eligible, using only the CSV.
+def screen_vpint2(sample, csv_bounds):
+    """CSV-only pre-download check.
 
-    We only look at the cloud side here: is there a cloudy frame (some clouds
-    but not fully covered) and a clear-enough reference frame (union below
-    max_ref_cloud)? We skip the date/order rules on purpose, so this keeps a
-    few extra samples but never drops a real one.
-
-    Returns "skip" / "eligible" / "uncertain".
+    Labels a sample as "skip", "eligible", or "uncertain" based on whether a
+    likely clear reference (<10% cloud/shadow) can occur before a cloudy frame.
     """
     roi = sample["roi"][0]
-    cloudy_accept = cloudy_straddle = False
-    ref_accept = ref_straddle = False
+    cloudy_accept_dts = []
+    cloudy_straddle_dts = []
+    ref_accept_dts = []
+    ref_straddle_dts = []
+
+    def has_before(ref_dts, cloudy_dts):
+        return any(ref_dt < cloudy_dt for ref_dt in ref_dts for cloudy_dt in cloudy_dts)
+
     for ts, _ in sample.get("s2_toa", []):
         v = csv_bounds.get((roi, ts))
         if v is None:
             continue
+        ts_dt = string_to_datetime(ts)
         floor = max(v[0], v[1])
         ceil = min(v[0] + v[1], 1.0)
-        # cloudy frame: needs some clouds but not 100%
+        # cloudy frame should be partly cloudy (not fully clear/covered)
         if ceil <= 0 or floor >= 1:
-            pass  # fully clear or fully covered, can't be the cloudy frame
+            pass
         elif floor > 0 and ceil < 1:
-            cloudy_accept = True
+            cloudy_accept_dts.append(ts_dt)
         else:
-            cloudy_straddle = True
-        # reference frame: clear enough (union <= max_ref_cloud)
-        if ceil <= max_ref_cloud:
-            ref_accept = True
-        elif floor > max_ref_cloud:
-            pass  # too cloudy to be a reference
+            cloudy_straddle_dts.append(ts_dt)
+
+        # reference frame should be likely clear enough
+        if ceil <= MAX_REF_CLOUD:
+            ref_accept_dts.append(ts_dt)
+        elif floor > MAX_REF_CLOUD:
+            pass
         else:
-            ref_straddle = True
-    cloudy_ok = cloudy_accept or cloudy_straddle
-    ref_ok = ref_accept or ref_straddle
-    if not (cloudy_ok and ref_ok):
+            ref_straddle_dts.append(ts_dt)
+
+    ordered_accept = has_before(ref_accept_dts, cloudy_accept_dts)
+    ordered_possible = has_before(
+        ref_accept_dts + ref_straddle_dts,
+        cloudy_accept_dts + cloudy_straddle_dts,
+    )
+
+    if not ordered_possible:
         return "skip"
-    if cloudy_accept and ref_accept:
+    if ordered_accept:
         return "eligible"
     return "uncertain"
 
 
-def find_vpint2_pair(
-    sample,
-    max_ref_cloud=0.10,
-    max_target_gap_days=5,
-):
+def find_vpint2_pair(sample):
     target_date = sample["target"][0][0]
     target_dt = string_to_datetime(target_date)
 
@@ -129,18 +134,16 @@ def find_vpint2_pair(
         cloudy_date, cloudy_fpath = cloudy_input[0], cloudy_input[1]
         cloudy_dt = string_to_datetime(cloudy_date)
 
-        # occlusion (cloud | shadow) from the frame's mask
         cloudy_cloud = frame_occlusion(cloudy_fpath)
         if cloudy_cloud is None:
             continue
 
-        # Cloudy image must contain clouds/shadows, but not be fully covered.
+        # cloudy frame must be partly cloudy
         if cloudy_cloud <= 0 or cloudy_cloud >= 1:
             continue
 
-        # delta days from target within range
         cloudy_target_delta = abs((target_dt - cloudy_dt).days)
-        if cloudy_target_delta > max_target_gap_days:
+        if cloudy_target_delta > MAX_TARGET_GAP_DAYS:
             continue
 
         refs = []
@@ -149,16 +152,14 @@ def find_vpint2_pair(
             ref_date, ref_fpath = ref_input[0], ref_input[1]
             ref_dt = string_to_datetime(ref_date)
 
-            if ref_dt >= cloudy_dt:  # t before cloudy
+            if ref_dt >= cloudy_dt:
                 continue
 
-            # occlusion (cloud | shadow) from the frame's mask
             ref_cloud = frame_occlusion(ref_fpath)
             if ref_cloud is None:
                 continue
 
-            # occlusion below threshold (simulating clear image)
-            if ref_cloud <= max_ref_cloud:
+            if ref_cloud <= MAX_REF_CLOUD:
                 refs.append((ref_idx, ref_dt, ref_cloud))
 
         if not refs:
@@ -167,8 +168,7 @@ def find_vpint2_pair(
         ref_idx, ref_dt, ref_cloud = min(
             refs,
             key=lambda x: (
-                x[2],  # pick reference image with lowest occlusion
-                # if tie, pick reference closest in time to cloudy image
+                x[2],
                 abs((cloudy_dt - x[1]).days),
             ),
         )
@@ -186,22 +186,15 @@ def find_vpint2_pair(
             best = candidate
             continue
 
-        current_score = (
+        if (
             candidate["cloudy_target_delta_days"],
             candidate["reference_occlusion_pct"],
             -candidate["cloudy_occlusion_pct"],
-        )
-
-        best_score = (
+        ) < (
             best["cloudy_target_delta_days"],
             best["reference_occlusion_pct"],
             -best["cloudy_occlusion_pct"],
-        )
-
-        # Keep the best candidate for this ROI:
-        # prioritize smaller target-date gap, clearer reference image,
-        # and higher occlusion in the cloudy image.
-        if current_score < best_score:
+        ):
             best = candidate
 
     return best
@@ -231,30 +224,10 @@ def main():
     )
 
     parser.add_argument(
-        "--max-ref-cloud",
-        type=float,
-        default=0.10,
-        help="Maximum cloud/shadow percentage for reference input",
-    )
-
-    parser.add_argument(
-        "--max-gap-days",
-        type=int,
-        default=5,
-        help="Maximum temporal gap between cloudy input and target",
-    )
-
-    parser.add_argument(
         "--screen",
         action="store_true",
         help="CSV-only pre-screen: write the candidate ROI download list using "
              "cloud/shadow numbers, without opening any mask files.",
-    )
-
-    parser.add_argument(
-        "--csv",
-        default="metadata/data/s2_metadata.csv",
-        help="Path to s2_metadata.csv (only used with --screen)",
     )
 
     parser.add_argument(
@@ -269,13 +242,13 @@ def main():
         dataset = json.load(f)
 
     if args.screen:
-        csv_bounds = load_csv_bounds(args.csv)
+        csv_bounds = load_csv_bounds(CSV_BOUNDS_PATH)
         eligible = set()
         uncertain = set()
         for sample in dataset.values():
             if not sample.get("s2_toa") or not sample.get("target"):
                 continue
-            status = screen_vpint2(sample, csv_bounds, args.max_ref_cloud)
+            status = screen_vpint2(sample, csv_bounds)
             roi = sample["roi"][0]
             if status == "eligible":
                 eligible.add(roi)
@@ -298,11 +271,7 @@ def main():
         if not sample.get("s2_toa") or not sample.get("target"):
             continue
 
-        pair = find_vpint2_pair(
-            sample,
-            max_ref_cloud=args.max_ref_cloud,
-            max_target_gap_days=args.max_gap_days,
-        )
+        pair = find_vpint2_pair(sample)
 
         if pair is not None:
             subset[sample_id] = pair

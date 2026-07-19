@@ -1,3 +1,16 @@
+"""Filter AllClear test samples to VPint2-eligible candidates.
+
+Two-phase filtering approach:
+- Phase 1 (uses AllClear's test_tx3_s2-s1_100pct_1proi.json metadata + s2_metadata.csv): Screen ROI candidates using cloud/shadow percentages for data download via allclear-download.py
+- Phase 2: using downloaded data, select VPint2 eligible reference+cloudy S2 pairs per ROI
+
+Outputs:
+- vpint2_pairs.json: references the selected reference+cloudy S2 pairs per ROI in test_tx3_s2-s1_100pct_1proi.json, plus pair metadata (cloud %, gap days)
+- optional ROI list (--roi-list-out): ROI IDs from Phase 1, used for data download before Phase 2
+
+Note: Full sample metadata is retrieved from the original test_tx3_s2-s1_100pct_1proi.json using vpint2_pairs.json as the filtering index.
+"""
+
 import argparse
 import json
 import os
@@ -18,8 +31,6 @@ CSV_BOUNDS_PATH = "metadata/data/s2_metadata.csv"
 CLOUD_BAND = 2
 SHADOW_BAND = 5
 
-_occlusion_cache = {}
-
 
 def string_to_datetime(value):
     return datetime.strptime(value, TIME_FORMAT)
@@ -33,11 +44,8 @@ def frame_occlusion(s2_fpath):
     are treated as occluded pixels. If the mask file is missing locally,
     returns None.
     """
-    if s2_fpath in _occlusion_cache:
-        return _occlusion_cache[s2_fpath]
     mask_fpath = s2_fpath.replace("s2_toa", "cld_shdw")
     if not os.path.exists(mask_fpath):
-        _occlusion_cache[s2_fpath] = None
         return None
     with rs.open(mask_fpath) as src:
         cloud = src.read(CLOUD_BAND)
@@ -45,7 +53,6 @@ def frame_occlusion(s2_fpath):
     cloud = np.nan_to_num(cloud, nan=1.0)
     shadow = np.nan_to_num(shadow, nan=1.0)
     frac = float(((cloud + shadow) > 0).mean())
-    _occlusion_cache[s2_fpath] = frac
     return frac
 
 
@@ -71,11 +78,10 @@ def load_csv_bounds(csv_path):
     return bounds
 
 
-def screen_vpint2(sample, csv_bounds):
-    """CSV-only pre-download check.
+def phase1_screen_vpint2(sample, csv_bounds):
+    """Phase 1: List ROIs for download by checking if a clear reference exists before a cloudy frame.
 
-    Labels a sample as "skip", "eligible", or "uncertain" based on whether a
-    likely clear reference (<10% cloud/shadow) can occur before a cloudy frame.
+    Returns "skip", "eligible", or "uncertain" based on s2_metadata.csv cloud/shadow percentages.
     """
     roi = sample["roi"][0]
     cloudy_accept_dts = []
@@ -101,7 +107,7 @@ def screen_vpint2(sample, csv_bounds):
         else:
             cloudy_straddle_dts.append(ts_dt)
 
-        # reference frame should be likely clear enough
+        # reference frame should be clear enough (<10% cloud)
         if ceil <= MAX_REF_CLOUD:
             ref_accept_dts.append(ts_dt)
         elif floor > MAX_REF_CLOUD:
@@ -122,7 +128,13 @@ def screen_vpint2(sample, csv_bounds):
     return "uncertain"
 
 
-def find_vpint2_pair(sample):
+def phase2_find_pair(sample, missing_masks):
+    """Phase 2: Find the best reference+cloudy S2 pair by selection criteria.
+
+    Selection priority: (1) minimize cloudy-target temporal gap ≤10 days, (2) minimize reference cloud%,
+    (3) maximize cloudy cloud% (prefer more cloudy frames).
+    Returns pairing metadata dict or None if no valid pair exists.
+    """
     target_date = sample["target"][0][0]
     target_dt = string_to_datetime(target_date)
 
@@ -136,9 +148,10 @@ def find_vpint2_pair(sample):
 
         cloudy_cloud = frame_occlusion(cloudy_fpath)
         if cloudy_cloud is None:
+            missing_masks.add(cloudy_fpath)
             continue
 
-        # cloudy frame must be partly cloudy
+        # cloudy frame must be partly cloudy (not completely clear or covered)
         if cloudy_cloud <= 0 or cloudy_cloud >= 1:
             continue
 
@@ -157,6 +170,7 @@ def find_vpint2_pair(sample):
 
             ref_cloud = frame_occlusion(ref_fpath)
             if ref_cloud is None:
+                missing_masks.add(ref_fpath)
                 continue
 
             if ref_cloud <= MAX_REF_CLOUD:
@@ -186,6 +200,8 @@ def find_vpint2_pair(sample):
             best = candidate
             continue
 
+        # Selection tuple: (cloudy_target_delta, reference_cloud%, -cloudy_cloud%)
+        # Priority: (1) smallest target gap, (2) lowest reference cloud, (3) highest cloudy opacity
         if (
             candidate["cloudy_target_delta_days"],
             candidate["reference_occlusion_pct"],
@@ -202,97 +218,72 @@ def find_vpint2_pair(sample):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Filter AllClear JSON to VPint2-compatible samples"
+        description="Filter AllClear dataset into VPint2-compatible samples"
     )
-
-    parser.add_argument(
-        "--metadata-json",
-        default="metadata/datasets/test_tx3_s2-s1_100pct_1proi.json",
-        help="Path to AllClear test metadata JSON",
-    )
-
     parser.add_argument(
         "--pairs-out",
         default="setup/vpint2_pairs.json",
-        help="Output path for VPint2 pairs metadata JSON",
+        help="Output path for VPint2 pairs metadata (filtering index)",
     )
 
     parser.add_argument(
-        "--data-out",
-        default="setup/vpint2_samples.json",
-        help="Output path for VPint2 samples JSON (AllClear format, eligible samples only)",
-    )
-
-    parser.add_argument(
-        "--screen",
-        action="store_true",
-        help="CSV-only pre-screen: write the candidate ROI download list using "
-             "cloud/shadow numbers, without opening any mask files.",
-    )
-
-    parser.add_argument(
-        "--candidates-out",
-        default="setup/vpint2_candidates.txt",
-        help="Output path for candidate ROI IDs (only used with --screen)",
+        "--roi-list-out",
+        default=None,
+        help=(
+            "Phase 1: Pre-filter candidate ROIs to download and write them to a file (one per line). "
+            "Use output with allclear-download.py --roi-file before running Phase 2."
+        ),
     )
 
     args = parser.parse_args()
 
-    with open(args.metadata_json, "r", encoding="utf-8") as f:
+    metadata_json = "metadata/datasets/test_tx3_s2-s1_100pct_1proi.json"
+    with open(metadata_json, "r", encoding="utf-8") as f:
         dataset = json.load(f)
 
-    if args.screen:
+    if args.roi_list_out:
+        # Phase 1: List all ROI candidates to download. Eliminates all ROIs that do not meet VPint2's input criteria (clear s2 frame occuring before a cloudy s2 frame). Uses s2_metadata.csv as reference for cloud/shadow coverage
         csv_bounds = load_csv_bounds(CSV_BOUNDS_PATH)
         eligible = set()
         uncertain = set()
         for sample in dataset.values():
             if not sample.get("s2_toa") or not sample.get("target"):
                 continue
-            status = screen_vpint2(sample, csv_bounds)
+            status = phase1_screen_vpint2(sample, csv_bounds)
             roi = sample["roi"][0]
             if status == "eligible":
                 eligible.add(roi)
             elif status == "uncertain":
                 uncertain.add(roi)
         candidates = sorted(eligible | uncertain)
-        Path(args.candidates_out).write_text(
+        Path(args.roi_list_out).write_text(
             "\n".join(candidates) + "\n", encoding="utf-8")
         total = len(set(s["roi"][0] for s in dataset.values()))
-        print(f"[screen] candidate ROIs: {len(candidates)} "
-              f"(certain-eligible {len(eligible)}, "
-              f"uncertain/straddle-only {len(uncertain - eligible)})")
-        print(f"[screen] certainly-skip ROIs: {total - len(candidates)}")
-        print(f"[screen] wrote candidate ROI list to {args.candidates_out}")
+        print(f"Saved {len(candidates)} candidate ROIs to {args.roi_list_out}")
         return
 
+    # Phase 2: For each sample, find the best clear/cloudy S2 pair by closest cloudy to target temporal gap
     subset = {}
+    missing_masks = set()
 
     for sample_id, sample in tqdm(dataset.items()):
         if not sample.get("s2_toa") or not sample.get("target"):
             continue
 
-        pair = find_vpint2_pair(sample)
+        pair = phase2_find_pair(sample, missing_masks)
 
         if pair is not None:
             subset[sample_id] = pair
 
-    missing = sum(1 for v in _occlusion_cache.values() if v is None)
-    if missing:
+    if missing_masks:
         print(
-            f"WARNING: {missing} S2 frames had no local cld_shdw mask and were skipped.")
+            f"WARNING: {len(missing_masks)} S2 frames had no local cld_shdw mask and were skipped.")
 
     Path(args.pairs_out).write_text(
         json.dumps(subset, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    print(f"Saved {len(subset)} VPint2-compatible samples to {args.pairs_out}")
-
-    dataset_subset = {sid: dataset[sid] for sid in subset}
-    Path(args.data_out).write_text(
-        json.dumps(dataset_subset, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    print(f"Saved filtered dataset to {args.data_out}")
+    print(f"Saved {len(subset)} VPint2-eligible pairs to {args.pairs_out}")
 
 
 if __name__ == "__main__":

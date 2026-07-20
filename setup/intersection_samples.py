@@ -1,4 +1,5 @@
-"""Create the final benchmark test set by keeping only samples present in both emrdm_samples.json and vpint2_samples.json files (their intersection).
+"""Create the final benchmark test set by keeping only samples present in both emrdm_pairs.json and vpint2_pairs.json (their intersection).
+Fetches full metadata from the original AllClear test set using these indices.
 """
 
 import argparse
@@ -10,17 +11,22 @@ DEFAULT_OUT = Path(__file__).parent / "intersection_samples.json"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Create intersection of EMRDM and VPint2 sample JSON files"
+        description="Create intersection of EMRDM and VPint2 eligible samples using filtering indices"
     )
     parser.add_argument(
-        "--emrdm-samples-fpath",
+        "--emrdm-pairs-fpath",
         required=True,
-        help="Path to EMRDM samples JSON (source records preserved in output)",
+        help="Path to EMRDM pairs JSON (filtering index: which samples passed Phase 2)",
     )
     parser.add_argument(
-        "--vpint2-samples-fpath",
+        "--vpint2-pairs-fpath",
         required=True,
-        help="Path to VPint2 samples JSON",
+        help="Path to VPint2 pairs JSON (filtering index)",
+    )
+    parser.add_argument(
+        "--metadata-json",
+        default="metadata/datasets/test_tx3_s2-s1_100pct_1proi.json",
+        help="Path to full AllClear metadata JSON (source of truth for all sample data)",
     )
     parser.add_argument(
         "--out-fpath",
@@ -32,32 +38,47 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
-    emrdm_path = Path(args.emrdm_samples_fpath)
-    vpint2_path = Path(args.vpint2_samples_fpath)
+    emrdm_pairs_path = Path(args.emrdm_pairs_fpath)
+    vpint2_pairs_path = Path(args.vpint2_pairs_fpath)
+    metadata_path = Path(args.metadata_json)
     out_path = Path(args.out_fpath)
 
-    if not emrdm_path.exists():
-        raise FileNotFoundError(f"EMRDM samples file not found: {emrdm_path}")
-    if not vpint2_path.exists():
+    if not emrdm_pairs_path.exists():
         raise FileNotFoundError(
-            f"VPint2 samples file not found: {vpint2_path}")
+            f"EMRDM pairs file not found: {emrdm_pairs_path}")
+    if not vpint2_pairs_path.exists():
+        raise FileNotFoundError(
+            f"VPint2 pairs file not found: {vpint2_pairs_path}")
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
 
-    with open(emrdm_path) as f:
-        emrdm = json.load(f)
-    with open(vpint2_path) as f:
-        vpint2 = json.load(f)
+    # Load filtering indices (keys only)
+    with open(emrdm_pairs_path) as f:
+        emrdm_pairs = json.load(f)
+    with open(vpint2_pairs_path) as f:
+        vpint2_pairs = json.load(f)
 
-    shared = [k for k in emrdm if k in vpint2]
-    out = {k: emrdm[k] for k in shared}
+    # Find intersection of sample IDs
+    emrdm_ids = set(emrdm_pairs.keys())
+    vpint2_ids = set(vpint2_pairs.keys())
+    shared_ids = emrdm_ids & vpint2_ids
+
+    # Load full metadata and extract shared samples
+    with open(metadata_path) as f:
+        full_metadata = json.load(f)
+
+    intersection = {sid: full_metadata[sid]
+                    for sid in shared_ids if sid in full_metadata}
 
     with open(out_path, "w") as f:
-        json.dump(out, f, indent=2)
+        json.dump(intersection, f, indent=2)
 
-    print(f"EMRDM samples       : {len(emrdm)}")
-    print(f"VPint2 samples      : {len(vpint2)}")
-    print(f"Intersection samples: {len(out)}")
-    print(f"EMRDM source        : {emrdm_path}")
-    print(f"VPint2 source       : {vpint2_path}")
+    print(f"EMRDM eligible      : {len(emrdm_ids)}")
+    print(f"VPint2 eligible     : {len(vpint2_ids)}")
+    print(f"Intersection samples: {len(intersection)}")
+    print(f"EMRDM pairs source  : {emrdm_pairs_path}")
+    print(f"VPint2 pairs source : {vpint2_pairs_path}")
+    print(f"Metadata source     : {metadata_path}")
     print(f"Written to: {out_path}")
 
 

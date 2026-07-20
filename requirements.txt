@@ -10,7 +10,7 @@ click-plugins==1.1.1.2
 cligj==0.7.2
 idna==3.13
 networkx==3.4.2
-numpy==2.4.4
+numpy==2.2.6
 pyparsing==3.3.2
 PyYAML==6.0.3
 rasterio==1.4.4

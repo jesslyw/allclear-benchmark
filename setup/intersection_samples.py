@@ -35,13 +35,18 @@ def get_dominant_lc_class(roi_id, target_date_str, data_root="data"):
 
         with rasterio.open(dw_path) as src:
             data = src.read(1).flatten()
+            # Replace NaN with 0, then cast to int
+            data = np.nan_to_num(data, nan=0.0).astype(int)
             # Count non-zero classes (DW has classes 1-9, 0 is invalid)
             counts = np.bincount(data)
             if len(counts) > 1:
                 # Return class with highest count (skipping 0)
-                return int(np.argmax(counts[1:]) + 1)
-        return None
-    except (FileNotFoundError, ValueError, IndexError):
+                dominant = int(np.argmax(counts[1:]) + 1)
+                return dominant
+            # All pixels are 0 (nodata)
+            return None
+    except Exception as e:
+        # Silently skip on error, log to stderr if needed
         return None
 
 

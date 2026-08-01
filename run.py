@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Usage: python run.py --model-name <model> [benchmark args...]"""
+"""
+Entry point to run the benchmark
+
+Runs benchmark.py with the selected model environment's Python interpreter
+and forwards all provided CLI arguments
+
+Usage: python run.py --model-name <model> [benchmark.py args...]
+
+"""
 import subprocess
 import sys
 from pathlib import Path
@@ -11,8 +19,10 @@ ENVS = {
 }
 
 args = sys.argv[1:]
-model = next((args[i+1].lower() for i, a in enumerate(args)
-             if a == "--model-name" and i+1 < len(args)), None)
+try:
+    model = args[args.index("--model-name") + 1].lower()
+except (ValueError, IndexError):
+    model = None
 if not model or model not in ENVS:
     sys.exit(f"Error: --model-name required. Available: {', '.join(ENVS)}")
 

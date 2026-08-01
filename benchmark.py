@@ -61,6 +61,112 @@ def _plot_lulc_metrics(metrics_data: dict[int, dict[str, float]], save_dir: Path
     plt.close(fig)
 
 
+def _rgb_from_chw(frame_chw: torch.Tensor) -> torch.Tensor:
+    """Convert (C,H,W) tensor in [0,1] to RGB (H,W,3)."""
+    if frame_chw.shape[0] >= 4:
+        bands = [3, 2, 1]  # S2 RGB
+    elif frame_chw.shape[0] >= 3:
+        bands = [2, 1, 0]
+    else:
+        # Fallback: repeat the first channel if we don't have enough channels.
+        first = frame_chw[0:1]
+        frame_chw = torch.cat([first, first, first], dim=0)
+        bands = [0, 1, 2]
+    return frame_chw[bands].permute(1, 2, 0).clamp(0, 1)
+
+
+def _batch_item(value, index):
+    if isinstance(value, (list, tuple)):
+        return value[index]
+    return value
+
+
+def _get_model_input_views(batch: dict, prepped: dict, batch_index: int, model_name: str) -> list[tuple[str, torch.Tensor]]:
+    """Return model-aware list of input frames to visualize as (title, CHW tensor)."""
+    inputs_s2 = batch["input_images"][batch_index, :13]  # (C,T,H,W)
+    n_t = inputs_s2.shape[1]
+    model_name = model_name.lower()
+
+    if model_name == "vpint2" and "vpint_batch" in prepped:
+        data_id = _batch_item(batch["data_id"], batch_index)
+        matched = None
+        for item in prepped["vpint_batch"]:
+            if item.get("data_id") == data_id:
+                matched = item
+                break
+        if matched is not None:
+            t_ref = int(matched["t_ref"])
+            t_cloudy = int(matched["t_cloudy"])
+            views = []
+            if 0 <= t_ref < n_t:
+                views.append((f"Input ref t={t_ref}", inputs_s2[:, t_ref]))
+            if 0 <= t_cloudy < n_t:
+                views.append(
+                    (f"Input cloudy t={t_cloudy}", inputs_s2[:, t_cloudy]))
+            if views:
+                return views
+
+    if model_name == "emrdm" and "t_cloudy" in prepped:
+        t_cloudy = int(prepped["t_cloudy"][batch_index].item())
+        if 0 <= t_cloudy < n_t:
+            return [(f"Input cloudy t={t_cloudy}", inputs_s2[:, t_cloudy])]
+
+    return [(f"Input t={t}", inputs_s2[:, t]) for t in range(n_t)]
+
+
+def _save_batch_visualizations(
+    batch: dict,
+    prepped: dict,
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    out_dir: Path,
+    model_name: str,
+    vis_count: int,
+    max_vis_samples: int,
+) -> int:
+    """Save qualitative panels and return updated visualization count."""
+    vis_dir = out_dir / f"{model_name}_vis"
+    vis_dir.mkdir(parents=True, exist_ok=True)
+
+    b_size = pred.shape[0]
+    for b in range(b_size):
+        if max_vis_samples > 0 and vis_count >= max_vis_samples:
+            return vis_count
+
+        data_id = str(_batch_item(batch["data_id"], b))
+        input_views = _get_model_input_views(batch, prepped, b, model_name)
+
+        pred_t = 0
+        tgt_t = 0
+        pred_frame = pred[b, :, pred_t].detach().cpu()
+        target_frame = target[b, :, tgt_t].detach().cpu()
+        panels = input_views + \
+            [("Prediction", pred_frame), ("Target", target_frame)]
+
+        n_panels = len(panels)
+        fig, axes = plt.subplots(
+            1, n_panels, figsize=(3 * n_panels, 3), dpi=160)
+        if n_panels == 1:
+            axes = [axes]
+
+        for ax, (title, frame) in zip(axes, panels):
+            rgb = _rgb_from_chw(frame).numpy()
+            ax.imshow(rgb)
+            ax.set_title(title)
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+        fig.suptitle(data_id, fontsize=9)
+        fig.tight_layout()
+
+        safe_id = data_id.replace("/", "_").replace(" ", "_")
+        fig.savefig(vis_dir / f"{safe_id}.png", bbox_inches="tight")
+        plt.close(fig)
+        vis_count += 1
+
+    return vis_count
+
+
 def _to_bcthw(x: torch.Tensor, target_c: int) -> torch.Tensor:
     """Normalize tensor layout to (B, C, T, H, W)."""
     if x.dim() == 4:  # (B, C, H, W)
@@ -165,6 +271,12 @@ class BenchmarkRunner:
         }
         predictions = []
         metadata_rows = []
+        vis_count = 0
+
+        dataset_name = Path(self.args.dataset_fpath).stem
+        output_dir = Path(self.args.experiment_output_path) / \
+            "AllClear" / dataset_name
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # wrapper to guard against missing files
         def _safe_iter(loader):
@@ -194,6 +306,18 @@ class BenchmarkRunner:
                 pred = _to_bcthw(pred.to(self.device), target_c=target_c)
                 target = _to_bcthw(target, target_c=target_c)
                 predictions.append(pred.detach().cpu())
+
+                if self.args.draw_vis == 1:
+                    vis_count = _save_batch_visualizations(
+                        batch=batch,
+                        prepped=prepped,
+                        pred=pred,
+                        target=target,
+                        out_dir=output_dir,
+                        model_name=self.args.model_name,
+                        vis_count=vis_count,
+                        max_vis_samples=self.args.max_vis_samples,
+                    )
 
                 valid_mask = _valid_mask(batch, target)
                 batch_metrics = compute_batch_metrics(pred, target, valid_mask)
@@ -303,12 +427,6 @@ class BenchmarkRunner:
             "NBR_MAE": torch.nanmean(merged["NBR_MAE"]).item(),
             "num_samples": num_samples,
         }
-
-        # output folder close to original benchmark structure
-        dataset_name = Path(self.args.dataset_fpath).stem
-        output_dir = Path(self.args.experiment_output_path) / \
-            "AllClear" / dataset_name
-        output_dir.mkdir(parents=True, exist_ok=True)
 
         # artifact 1: predictions tensor
         if predictions:
@@ -423,6 +541,10 @@ def parse_args():
                         default=0, help="UnCRtainTS checkpoint epoch (0 = latest)")
     parser.add_argument("--experiment-output-path", type=str,
                         default="outputs", help="Base output path for benchmark artifacts")
+    parser.add_argument("--draw-vis", type=int, default=0,
+                        help="0: do not save qualitative panels, 1: save panels")
+    parser.add_argument("--max-vis-samples", type=int, default=0,
+                        help="Maximum number of samples to visualize (0 means all valid samples)")
     return parser.parse_args()
 
 

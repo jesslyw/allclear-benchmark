@@ -1,13 +1,12 @@
 """
-Benchmark runner for AllClear-style datasets.
+Benchmark runner for AllClear
 
-Based on: https://github.com/Zhou-Hangyu/allclear (allclear/benchmark.py)
+Adapted from: https://github.com/Zhou-Hangyu/allclear (allclear/benchmark.py)
 License: MIT
 """
 
 import argparse
 import json
-from dataclasses import dataclass
 
 import torch
 from torch.utils.data import DataLoader
@@ -16,18 +15,6 @@ from tqdm import tqdm
 import model_wrappers as wrappers
 from dataset import AllClearDataset
 from metrics import compute_batch_metrics
-
-
-@dataclass
-class MetricTotals:
-    mae_sum: float = 0.0
-    rmse_sum: float = 0.0
-    psnr_sum: float = 0.0
-    sam_sum: float = 0.0
-    ssim_sum: float = 0.0
-    ndvi_mae_sum: float = 0.0
-    nbr_mae_sum: float = 0.0
-    count: int = 0
 
 
 def _to_bcthw(x: torch.Tensor, target_c: int) -> torch.Tensor:
@@ -86,6 +73,14 @@ class BenchmarkRunner:
     def _setup_data_loader(self):
         with open(self.args.dataset_fpath, "r", encoding="utf-8") as f:
             dataset_json = json.load(f)
+        batch_size = self.args.batch_size
+        if self.args.model_name.lower() == "emrdm" and batch_size != 1:
+            print(
+                f"[INFO] EMRDM pointer-based evaluation uses batch-size=1 to keep prediction/target alignment safe. "
+                f"Overriding --batch-size {batch_size} -> 1."
+            )
+            batch_size = 1
+            self.args.batch_size = 1
         selected_rois = (
             self.args.selected_rois
             if self.args.selected_rois and "all" not in self.args.selected_rois
@@ -102,10 +97,18 @@ class BenchmarkRunner:
             s1_preprocess_mode=self.args.s1_preprocess_mode,
             max_diff=self.args.s1_max_diff,
         )
-        return DataLoader(dataset, batch_size=self.args.batch_size, shuffle=False, num_workers=self.args.num_workers)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=self.args.num_workers)
 
     def run(self):
-        totals = MetricTotals()
+        metric_values = {
+            "MAE": [],
+            "RMSE": [],
+            "PSNR": [],
+            "SAM": [],
+            "SSIM": [],
+            "NDVI_MAE": [],
+            "NBR_MAE": [],
+        }
 
         # wrapper to guard against missing files
         def _safe_iter(loader):
@@ -122,7 +125,7 @@ class BenchmarkRunner:
             with torch.no_grad():
                 prepped = self.model.preprocess(batch)
                 if prepped.get("skip_batch"):
-                    # not in vpint2_pairs.json
+                    # for emrdm/vpint2: wrapper marked this batch as unusable (sample(s) not in filtered test set or had no usable matched S1 input)
                     continue
                 pred = self.model.forward(prepped)["output"]
                 # no model output
@@ -135,29 +138,32 @@ class BenchmarkRunner:
                 pred = _to_bcthw(pred.to(self.device), target_c=target_c)
                 target = _to_bcthw(target, target_c=target_c)
 
-                mae, rmse, psnr, sam, ssim, ndvi_mae, nbr_mae, inc = compute_batch_metrics(
-                    pred, target, _valid_mask(batch, target))
-                totals.mae_sum += mae
-                totals.rmse_sum += rmse
-                totals.psnr_sum += psnr
-                totals.sam_sum += sam
-                totals.ssim_sum += ssim
-                totals.ndvi_mae_sum += ndvi_mae
-                totals.nbr_mae_sum += nbr_mae
-                totals.count += inc
+                batch_metrics = compute_batch_metrics(
+                    pred, target, _valid_mask(batch, target)
+                )
+                if batch_metrics["MAE"].numel() == 0:
+                    continue
+                for key, values in batch_metrics.items():
+                    metric_values[key].append(values.detach().cpu())
 
-        if totals.count == 0:
+        if not metric_values["MAE"]:
             raise RuntimeError("No valid batches were evaluated.")
 
+        merged = {
+            key: torch.cat(values, dim=0)
+            for key, values in metric_values.items()
+        }
+        num_samples = int(torch.isfinite(merged["MAE"]).sum().item())
+
         results = {
-            "MAE": totals.mae_sum / totals.count,
-            "RMSE": totals.rmse_sum / totals.count,
-            "PSNR": totals.psnr_sum / totals.count,
-            "SAM": totals.sam_sum / totals.count,
-            "SSIM": totals.ssim_sum / totals.count,
-            "NDVI_MAE": totals.ndvi_mae_sum / totals.count,
-            "NBR_MAE": totals.nbr_mae_sum / totals.count,
-            "num_batches": totals.count,
+            "MAE": torch.nanmean(merged["MAE"]).item(),
+            "RMSE": torch.nanmean(merged["RMSE"]).item(),
+            "PSNR": torch.nanmean(merged["PSNR"]).item(),
+            "SAM": torch.nanmean(merged["SAM"]).item(),
+            "SSIM": torch.nanmean(merged["SSIM"]).item(),
+            "NDVI_MAE": torch.nanmean(merged["NDVI_MAE"]).item(),
+            "NBR_MAE": torch.nanmean(merged["NBR_MAE"]).item(),
+            "num_samples": num_samples,
         }
         print(json.dumps(results, indent=2))
         return results

@@ -6,8 +6,12 @@ License: MIT
 """
 
 import argparse
+import csv
 import json
+import os
+from pathlib import Path
 
+import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -15,6 +19,46 @@ from tqdm import tqdm
 import model_wrappers as wrappers
 from dataset import AllClearDataset
 from metrics import compute_batch_metrics
+
+
+def _plot_lulc_metrics(metrics_data: dict[int, dict[str, float]], save_dir: Path, model_name: str) -> None:
+    """Plot class-wise LULC metrics using Dynamic World colors."""
+    dw_colors = [
+        "#000000",  # placeholder for class -1
+        "#419bdf",  # 0
+        "#397d49",  # 1
+        "#88b053",  # 2
+        "#7a87c6",  # 3
+        "#e49635",  # 4
+        "#dfc35a",  # 5
+        "#c4281b",  # 6
+        "#a59b8f",  # 7
+        "#b39fe1",  # 8
+    ]
+    metric_order = ["MAE", "RMSE", "PSNR", "SAM", "SSIM"]
+    vmax = [0.1, 0.1, 40, 15, 1]
+    class_indices = sorted(metrics_data.keys())
+
+    fig, axes = plt.subplots(1, 5, figsize=(20, 5), sharex=True, dpi=200)
+    for ax, metric, y_max in zip(axes, metric_order, vmax):
+        values = [metrics_data[c].get(metric, float("nan"))
+                  for c in class_indices]
+        ax.bar(class_indices, values, color=[
+               dw_colors[c + 1] for c in class_indices])
+        ax.set_title(metric)
+        ax.set_xlabel("Class")
+        ax.set_ylabel("Score")
+        ax.set_xticks(class_indices)
+        ax.grid(True)
+        ax.set_ylim(0, y_max)
+
+    fig.tight_layout()
+    save_dir.mkdir(parents=True, exist_ok=True)
+    fig.savefig(
+        save_dir / f"{model_name}_lulc_metrics.png", bbox_inches="tight")
+    fig.savefig(
+        save_dir / f"{model_name}_lulc_metrics.pdf", bbox_inches="tight")
+    plt.close(fig)
 
 
 def _to_bcthw(x: torch.Tensor, target_c: int) -> torch.Tensor:
@@ -109,6 +153,18 @@ class BenchmarkRunner:
             "NDVI_MAE": [],
             "NBR_MAE": [],
         }
+        lulc_metric_values = {
+            c: {
+                "MAE": [],
+                "RMSE": [],
+                "PSNR": [],
+                "SAM": [],
+                "SSIM": [],
+            }
+            for c in range(9)
+        }
+        predictions = []
+        metadata_rows = []
 
         # wrapper to guard against missing files
         def _safe_iter(loader):
@@ -137,14 +193,96 @@ class BenchmarkRunner:
                 # align tensors to (B C T H W)
                 pred = _to_bcthw(pred.to(self.device), target_c=target_c)
                 target = _to_bcthw(target, target_c=target_c)
+                predictions.append(pred.detach().cpu())
 
-                batch_metrics = compute_batch_metrics(
-                    pred, target, _valid_mask(batch, target)
-                )
+                valid_mask = _valid_mask(batch, target)
+                batch_metrics = compute_batch_metrics(pred, target, valid_mask)
                 if batch_metrics["MAE"].numel() == 0:
                     continue
                 for key, values in batch_metrics.items():
                     metric_values[key].append(values.detach().cpu())
+
+                # metadata rows (one row per evaluated frame)
+                data_ids = batch["data_id"]
+                n_frames = int(batch_metrics["MAE"].numel())
+                cld_stats = batch.get("input_cld_shdw")
+                avg_cloud = None
+                avg_shadow = None
+                consistent_cloud = None
+                consistent_shadow = None
+                if cld_stats is not None:
+                    # B,C,T,H,W -> B,C
+                    avg_cld_shdw = torch.mean(cld_stats, dim=[2, 3, 4]).cpu()
+                    # consistent cloud/shadow across all input frames
+                    consistent = (torch.sum(cld_stats, dim=2)
+                                  == cld_stats.shape[2]).float()
+                    consistent_cld_shdw = torch.mean(
+                        consistent, dim=[2, 3]).cpu()
+                    avg_cloud = avg_cld_shdw[:, 0].tolist()
+                    avg_shadow = avg_cld_shdw[:, 1].tolist()
+                    consistent_cloud = consistent_cld_shdw[:, 0].tolist()
+                    consistent_shadow = consistent_cld_shdw[:, 1].tolist()
+
+                values_by_metric = {k: v.detach().cpu().tolist()
+                                    for k, v in batch_metrics.items()}
+                if len(data_ids) == n_frames:
+                    for i, data_id in enumerate(data_ids):
+                        row = {
+                            "data_id": data_id,
+                            "mae": values_by_metric["MAE"][i],
+                            "rmse": values_by_metric["RMSE"][i],
+                            "psnr": values_by_metric["PSNR"][i],
+                            "sam": values_by_metric["SAM"][i],
+                            "ssim": values_by_metric["SSIM"][i],
+                            "ndvi_mae": values_by_metric["NDVI_MAE"][i],
+                            "nbr_mae": values_by_metric["NBR_MAE"][i],
+                        }
+                        if avg_cloud is not None:
+                            row["avg_cld_percent"] = avg_cloud[i]
+                            row["avg_shdw_percent"] = avg_shadow[i]
+                            row["consistent_cld_percent"] = consistent_cloud[i]
+                            row["consistent_shdw_percent"] = consistent_shadow[i]
+                        metadata_rows.append(row)
+                else:
+                    # fallback for T>1: keep rows aligned with frame-wise metrics
+                    idx = 0
+                    for i, data_id in enumerate(data_ids):
+                        for t in range(target.shape[2]):
+                            if idx >= n_frames:
+                                break
+                            row = {
+                                "data_id": f"{data_id}_t{t}",
+                                "mae": values_by_metric["MAE"][idx],
+                                "rmse": values_by_metric["RMSE"][idx],
+                                "psnr": values_by_metric["PSNR"][idx],
+                                "sam": values_by_metric["SAM"][idx],
+                                "ssim": values_by_metric["SSIM"][idx],
+                                "ndvi_mae": values_by_metric["NDVI_MAE"][idx],
+                                "nbr_mae": values_by_metric["NBR_MAE"][idx],
+                            }
+                            if avg_cloud is not None:
+                                row["avg_cld_percent"] = avg_cloud[i]
+                                row["avg_shdw_percent"] = avg_shadow[i]
+                                row["consistent_cld_percent"] = consistent_cloud[i]
+                                row["consistent_shdw_percent"] = consistent_shadow[i]
+                            metadata_rows.append(row)
+                            idx += 1
+
+                # class-wise LULC metrics (artifacts 3/4)
+                if "target_dw" in batch:
+                    target_dw = _to_bcthw(
+                        batch["target_dw"].to(self.device), target_c=1)
+                    class_map = target_dw[:, 0:1, ...]
+                    for class_id in range(9):
+                        class_valid = valid_mask & (class_map == class_id)
+                        class_metrics = compute_batch_metrics(
+                            pred, target, class_valid)
+                        if class_metrics["MAE"].numel() == 0:
+                            continue
+                        for metric_name in ["MAE", "RMSE", "PSNR", "SAM", "SSIM"]:
+                            lulc_metric_values[class_id][metric_name].append(
+                                class_metrics[metric_name].detach().cpu()
+                            )
 
         if not metric_values["MAE"]:
             raise RuntimeError("No valid batches were evaluated.")
@@ -165,6 +303,71 @@ class BenchmarkRunner:
             "NBR_MAE": torch.nanmean(merged["NBR_MAE"]).item(),
             "num_samples": num_samples,
         }
+
+        # output folder close to original benchmark structure
+        dataset_name = Path(self.args.dataset_fpath).stem
+        output_dir = Path(self.args.experiment_output_path) / \
+            "AllClear" / dataset_name
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # artifact 1: predictions tensor
+        if predictions:
+            torch.save(torch.cat(predictions, dim=0), output_dir /
+                       f"{self.args.model_name}_predictions.pt")
+
+        # artifact 2: per-sample metadata CSV
+        if metadata_rows:
+            metadata_fields = [
+                "data_id",
+                "avg_cld_percent",
+                "avg_shdw_percent",
+                "consistent_cld_percent",
+                "consistent_shdw_percent",
+                "mae",
+                "rmse",
+                "psnr",
+                "sam",
+                "ssim",
+                "ndvi_mae",
+                "nbr_mae",
+            ]
+            with open(output_dir / f"{self.args.model_name}_metadata.csv", "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=metadata_fields)
+                writer.writeheader()
+                for row in metadata_rows:
+                    writer.writerow({k: row.get(k, float("nan"))
+                                    for k in metadata_fields})
+
+        # artifacts 3/4: class-wise LULC metrics CSV + plot
+        final_lulc_metrics = {}
+        for class_id in range(9):
+            class_result = {}
+            for metric_name in ["MAE", "RMSE", "PSNR", "SAM", "SSIM"]:
+                pieces = lulc_metric_values[class_id][metric_name]
+                if not pieces:
+                    class_result[metric_name] = float("nan")
+                else:
+                    class_result[metric_name] = torch.nanmean(
+                        torch.cat(pieces, dim=0)).item()
+            final_lulc_metrics[class_id] = class_result
+
+        with open(output_dir / f"{self.args.model_name}_lulc_metrics.csv", "w", newline="", encoding="utf-8") as f:
+            fieldnames = ["class", "MAE", "RMSE", "PSNR", "SAM", "SSIM"]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for class_id in range(9):
+                writer.writerow(
+                    {"class": class_id, **final_lulc_metrics[class_id]})
+
+        _plot_lulc_metrics(final_lulc_metrics, output_dir,
+                           self.args.model_name)
+
+        # artifact 5: aggregated metrics CSV
+        with open(output_dir / f"{self.args.model_name}_aggregated_metrics.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(results.keys()))
+            writer.writeheader()
+            writer.writerow(results)
+
         print(json.dumps(results, indent=2))
         return results
 
@@ -218,6 +421,8 @@ def parse_args():
                         default=None, help="UnCRtainTS experiment name")
     parser.add_argument("--uncrtaints-resume-at", type=int,
                         default=0, help="UnCRtainTS checkpoint epoch (0 = latest)")
+    parser.add_argument("--experiment-output-path", type=str,
+                        default="outputs", help="Base output path for benchmark artifacts")
     return parser.parse_args()
 
 

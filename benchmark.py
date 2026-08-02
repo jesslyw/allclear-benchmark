@@ -291,6 +291,11 @@ class BenchmarkRunner:
 
         for batch in tqdm(_safe_iter(self.data_loader), total=len(self.data_loader), desc="Benchmark"):
             with torch.no_grad():
+                # Preserve raw inputs for visualization before wrappers reshape batch tensors.
+                vis_batch = {
+                    "input_images": batch["input_images"],
+                    "data_id": batch.get("data_id"),
+                }
                 prepped = self.model.preprocess(batch)
                 if prepped.get("skip_batch"):
                     # for emrdm/vpint2: wrapper marked this batch as unusable (sample(s) not in filtered test set or had no usable matched S1 input)
@@ -309,7 +314,7 @@ class BenchmarkRunner:
 
                 if self.args.draw_vis == 1:
                     vis_count = _save_batch_visualizations(
-                        batch=batch,
+                        batch=vis_batch,
                         prepped=prepped,
                         pred=pred,
                         target=target,
@@ -335,6 +340,7 @@ class BenchmarkRunner:
                 consistent_cloud = None
                 consistent_shadow = None
                 if cld_stats is not None:
+                    cld_stats = _to_bcthw(cld_stats.to(self.device), target_c=2)
                     # B,C,T,H,W -> B,C
                     avg_cld_shdw = torch.mean(cld_stats, dim=[2, 3, 4]).cpu()
                     # consistent cloud/shadow across all input frames

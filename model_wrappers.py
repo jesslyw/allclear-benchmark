@@ -169,78 +169,135 @@ class UnCRtainTS(BaseModel):
         sys.path.insert(0, str(uncrtaints_root))
         sys.path.insert(0, str(uncrtaints_root / "model"))
         from model.src.model_utils import get_model, load_checkpoint
-        from model.src.utils import str2list
-        from model.parse_args import create_parser
 
         base_path = Path(
             getattr(args, "uncrtaints_base_path", str(uncrtaints_root)))
-        weight_folder = args.uncrtaints_weight_folder
-        experiment_name = args.uncrtaints_experiment_name
+        weight_folder = getattr(args, "uncrtaints_weight_folder", None)
+        experiment_name = getattr(args, "uncrtaints_experiment_name", None)
+        resume_at = int(getattr(args, "uncrtaints_resume_at", 0))
+        if weight_folder is None or experiment_name is None:
+            raise ValueError(
+                "UnCRtainTS requires --uncrtaints-weight-folder and --uncrtaints-experiment-name."
+            )
+
+        self.base_path = base_path
+        self.weight_folder = weight_folder
         self.experiment_name = experiment_name
-        resume_at = getattr(args, "uncrtaints_resume_at", 0)
+        self.resume_at = resume_at
 
-        conf_path = base_path / weight_folder / experiment_name / "conf.json"
-        with open(conf_path, "r") as f:
-            model_config = json.load(f)
+        self.exp_name = getattr(self.args, "exp_name", experiment_name)
 
-        parser = create_parser(mode="test")
-        no_overwrite = ["pid", "device", "resume_at", "trained_checkp", "res_dir",
-                        "weight_folder", "root1", "root2", "root3", "max_samples_count",
-                        "batch_size", "display_step", "plot_every", "export_every",
-                        "input_t", "region", "min_cov", "max_cov", "f"]
-        conf_dict = {k: v for k, v in model_config.items()
-                     if k not in no_overwrite}
-        conf_dict["resume_at"] = resume_at
-        conf_dict["weight_folder"] = str(base_path / weight_folder)
-        conf_dict["device"] = str(self.device)
-        import argparse as _argparse
-        t_args = _argparse.Namespace(**conf_dict)
-        config, _ = parser.parse_known_args(namespace=t_args)
-        config = str2list(
-            config, ["encoder_widths", "decoder_widths", "out_conv"])
+        self.config = self.get_config()
+        self.model = get_model(self.config).to(self.device)
 
-        self.model = get_model(config).to(self.device)
-        ckpt_n = f"_epoch_{resume_at}" if resume_at > 0 else ""
-        load_checkpoint(config, str(base_path / weight_folder),
-                        self.model, f"model{ckpt_n}")
+        ckpt_n = f"_epoch_{self.config.resume_at}" if self.config.resume_at > 0 else ""
+        print(f"Loading checkpoint: {self.weight_folder}/model{ckpt_n}")
+        load_checkpoint(self.config,
+                        str(self.base_path / self.weight_folder),
+                        self.model,
+                        f"model{ckpt_n}")
         self.model.eval()
 
-        self.num_input_dims = 13 if "noSAR_1" in experiment_name else 15
+        if "noSAR_1" in self.experiment_name:
+            self.num_input_dims = 13
+        else:
+            self.num_input_dims = 15
         self.S2_BANDS = 13
 
     def get_model_config(self):
         return None
 
+    def get_config(self):
+        import argparse
+        from model.src.utils import str2list
+        from model.parse_args import create_parser
+
+        parser = create_parser(mode="test")
+        logger.info(
+            f"Using UnCRtainTS config: {self.base_path}")
+        logger.info(
+            f"Using UnCRtainTS weight_folder: {self.weight_folder}")
+        logger.info(
+            f"Using UnCRtainTS experiment_name: {self.experiment_name}")
+
+        conf_path = self.base_path / self.weight_folder / \
+            self.experiment_name / "conf.json"
+        with open(conf_path, "r") as f:
+            model_config = json.load(f)
+            t_args = argparse.Namespace()
+            no_overwrite = [
+                "pid",
+                "device",
+                "resume_at",
+                "trained_checkp",
+                "res_dir",
+                "weight_folder",
+                "root1",
+                "root2",
+                "root3",
+                "max_samples_count",
+                "batch_size",
+                "display_step",
+                "plot_every",
+                "export_every",
+                "input_t",
+                "region",
+                "min_cov",
+                "max_cov",
+                "f",
+            ]
+            conf_dict = {key: val for key,
+                         val in model_config.items() if key not in no_overwrite}
+
+            conf_dict["weight_folder"] = self.weight_folder
+            conf_dict["resume_at"] = self.resume_at
+            for key, val in vars(self.args).items():
+                if key in no_overwrite:
+                    conf_dict[key] = val
+            t_args.__dict__.update(conf_dict)
+            config, _ = parser.parse_known_args(namespace=t_args)
+        config = str2list(
+            config, ["encoder_widths", "decoder_widths", "out_conv"])
+        return config
+
     def preprocess(self, inputs):
         inputs["input_images"] = inputs["input_images"].to(self.device)
+        inputs["target"] = inputs["target"].to(self.device)
         inputs["input_cld_shdw"] = inputs["input_cld_shdw"].to(self.device)
         inputs["input_images"] = inputs["input_images"].permute(
             0, 2, 1, 3, 4)[:, :, :self.num_input_dims]
+
+        inputs["_uc_target"] = inputs["target"].permute(
+            0, 2, 1, 3, 4)[:, :, :self.S2_BANDS]
         inputs["input_cld_shdw"] = torch.clip(
             inputs["input_cld_shdw"].sum(dim=1), 0, 1)
-        # Store under private key to avoid corrupting batch["target"] shape (used by benchmark.py for target_c)
-        inputs["_uc_target"] = inputs["target"].to(self.device).permute(0, 2, 1, 3, 4)[
-            :, :, :self.S2_BANDS]
-        # diagonal_1 was trained with S1 channels first; move them from [13:15] to front
-        if "diagonal_1" in self.experiment_name:
+
+        if "diagonal_1" in self.exp_name:
             inputs["input_images"] = torch.cat(
                 [inputs["input_images"][:, :, -2:], inputs["input_images"][:, :, :-2]], dim=2)
         return inputs
 
     def forward(self, inputs):
-        input_imgs = inputs["input_images"]           # (B, T, C, H, W)
-        target_imgs = inputs["_uc_target"]            # (B, 1, 13, H, W)
-        masks = inputs["input_cld_shdw"]              # (B, T, H, W)
-        dates = inputs["time_differences"].to(self.device)  # (B, T)
+        input_imgs = inputs["input_images"]
+        target_imgs = inputs["_uc_target"]
+        masks = inputs["input_cld_shdw"]
+        dates = inputs["time_differences"]
         model_inputs = {"A": input_imgs, "B": target_imgs,
                         "dates": dates, "masks": masks}
 
         with torch.no_grad():
             self.model.set_input(model_inputs)
             self.model.forward()
+            self.model.get_loss_G()
             self.model.rescale()
-            out = self.model.fake_B[:, :, :self.S2_BANDS]  # (B, T, 13, H, W)
-        return {"output": out}
+            out = self.model.fake_B
+            if hasattr(self.model.netG, "variance") and self.model.netG.variance is not None:
+                var = self.model.netG.variance
+                self.model.netG.variance = None
+            else:
+                var = out[:, :, self.S2_BANDS:, ...]
+            out = out[:, :, :self.S2_BANDS, ...]
+        return {"output": out, "variance": var}
 
 
 class LeastCloudy(BaseModel):
@@ -252,13 +309,19 @@ class LeastCloudy(BaseModel):
         return inputs
 
     def forward(self, inputs):
-        x = inputs["input_images"][:, :13].to(self.device)  # (B, 13, T, H, W)
-        m = inputs["input_cld_shdw"].to(self.device)        # (B, 2,  T, H, W)
-        cloudiness = m.sum(dim=(1, 3, 4))                   # (B, T)
-        t_best = cloudiness.argmin(dim=1)                   # (B,)
-        B, C, T, H, W = x.shape
-        idx = t_best.view(B, 1, 1, 1, 1).expand(B, C, 1, H, W)
-        return {"output": x.gather(2, idx)}                 # (B, 13, 1, H, W)
+        x = inputs["input_images"][:, :13].to(self.device)   # (B, 13, T, H, W)
+        m = inputs["input_cld_shdw"].to(self.device)         # (B, 2,  T, H, W)
+
+        input_imgs = x.permute(0, 2, 1, 3, 4)                # (B, T, 13, H, W)
+        cloudiness = m.sum(dim=(1, 3, 4))                    # (B, T)
+        least_cloudy_index = cloudiness.argmin(dim=1)        # (B,)
+        batch_indices = torch.arange(
+            input_imgs.shape[0], device=input_imgs.device)
+        least_cloudy_img = input_imgs[batch_indices,
+                                      least_cloudy_index, :13].unsqueeze(1)  # (B, 1, 13, H, W)
+
+        # (B, 13, 1, H, W)
+        return {"output": least_cloudy_img.permute(0, 2, 1, 3, 4)}
 
 
 class Mosaicing(BaseModel):
@@ -270,13 +333,24 @@ class Mosaicing(BaseModel):
         return inputs
 
     def forward(self, inputs):
-        x = inputs["input_images"][:, :13].to(self.device)  # (B, 13, T, H, W)
-        m = inputs["input_cld_shdw"].to(self.device)        # (B, 2,  T, H, W)
-        clear = (1 - m.sum(dim=1, keepdim=True).clamp(0, 1))  # (B, 1, T, H, W)
-        clear = clear.expand_as(x)
-        sum_pixels = (x * clear).sum(dim=2, keepdim=True)   # (B, 13, 1, H, W)
-        sum_views = clear.sum(dim=2, keepdim=True).clamp(min=1)
-        return {"output": sum_pixels / sum_views}            # (B, 13, 1, H, W)
+        input_imgs = inputs["input_images"].permute(
+            0, 2, 1, 3, 4).to(self.device)
+        masks = inputs["input_cld_shdw"].permute(
+            0, 2, 1, 3, 4).to(self.device)
+
+        masks = torch.clip(masks.sum(dim=2, keepdim=True), 0, 1)
+        clear_masks = 1 - masks
+        clear_pixels = input_imgs * clear_masks
+        sum_clear_pixels = clear_pixels.sum(dim=1)
+        sum_clear_views = clear_masks.sum(dim=1)
+
+        no_clear_views = sum_clear_views == 0
+        sum_clear_views[no_clear_views] = 1
+        mosaiced_img = sum_clear_pixels / sum_clear_views
+        mosaiced_img[no_clear_views.repeat(1, input_imgs.shape[2], 1, 1)] = 0.5
+
+        output = mosaiced_img[:, :13].unsqueeze(2).permute(0, 2, 1, 3, 4)
+        return {"output": output}
 
 
 class EMRDM(BaseModel):

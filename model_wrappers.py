@@ -111,7 +111,6 @@ class VPint2(BaseModel):
             batch_items.append({
                 "cloudy": cloudy,
                 "feature": feature,
-                "mask": mask_2d,
                 "t_ref": t_ref,
                 "t_cloudy": t_cloudy,
                 "data_id": data_id,

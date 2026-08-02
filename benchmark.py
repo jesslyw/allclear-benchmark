@@ -231,6 +231,13 @@ class BenchmarkRunner:
             )
             batch_size = 1
             self.args.batch_size = 1
+        if self.args.model_name.lower() == "vpint2" and batch_size != 1:
+            print(
+                f"[INFO] VPint2 pair-based evaluation uses batch-size=1 to keep prediction/target alignment safe. "
+                f"Overriding --batch-size {batch_size} -> 1."
+            )
+            batch_size = 1
+            self.args.batch_size = 1
         selected_rois = (
             self.args.selected_rois
             if self.args.selected_rois and "all" not in self.args.selected_rois

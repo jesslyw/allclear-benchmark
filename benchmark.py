@@ -194,7 +194,7 @@ def _valid_mask(batch: dict, target: torch.Tensor) -> torch.Tensor:
             dtype=torch.bool, device=target.device,
         )
     # normalise mask to shape of target
-    cld = _to_bcthw(batch["target_cld_shdw"], target_c=2)
+    cld = _to_bcthw(batch["target_cld_shdw"].to(target.device), target_c=2)
     return (~((cld[:, 0] + cld[:, 1]) > 0)).unsqueeze(1)
 
 

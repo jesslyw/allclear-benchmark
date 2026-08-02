@@ -21,6 +21,9 @@ from dataset import AllClearDataset
 from metrics import compute_batch_metrics
 
 
+LULC_METRICS = ["MAE", "RMSE", "PSNR", "SAM", "SSIM", "NDVI_MAE", "NBR_MAE"]
+
+
 def _plot_lulc_metrics(metrics_data: dict[int, dict[str, float]], save_dir: Path, model_name: str) -> None:
     """Plot class-wise LULC metrics using Dynamic World colors."""
     dw_colors = [
@@ -35,12 +38,24 @@ def _plot_lulc_metrics(metrics_data: dict[int, dict[str, float]], save_dir: Path
         "#a59b8f",  # 7
         "#b39fe1",  # 8
     ]
-    metric_order = ["MAE", "RMSE", "PSNR", "SAM", "SSIM"]
-    vmax = [0.1, 0.1, 40, 15, 1]
+    metric_order = LULC_METRICS
+    vmax_by_metric = {
+        "MAE": 0.1,
+        "RMSE": 0.1,
+        "PSNR": 40,
+        "SAM": 15,
+        "SSIM": 1,
+        "NDVI_MAE": 1,
+        "NBR_MAE": 1,
+    }
     class_indices = sorted(metrics_data.keys())
 
-    fig, axes = plt.subplots(1, 5, figsize=(20, 5), sharex=True, dpi=200)
-    for ax, metric, y_max in zip(axes, metric_order, vmax):
+    fig, axes = plt.subplots(
+        1, len(metric_order), figsize=(4 * len(metric_order), 5), sharex=True, dpi=200
+    )
+    if len(metric_order) == 1:
+        axes = [axes]
+    for ax, metric in zip(axes, metric_order):
         values = [metrics_data[c].get(metric, float("nan"))
                   for c in class_indices]
         ax.bar(class_indices, values, color=[
@@ -50,7 +65,9 @@ def _plot_lulc_metrics(metrics_data: dict[int, dict[str, float]], save_dir: Path
         ax.set_ylabel("Score")
         ax.set_xticks(class_indices)
         ax.grid(True)
-        ax.set_ylim(0, y_max)
+        y_max = vmax_by_metric.get(metric)
+        if y_max is not None:
+            ax.set_ylim(0, y_max)
 
     fig.tight_layout()
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -273,6 +290,8 @@ class BenchmarkRunner:
                 "PSNR": [],
                 "SAM": [],
                 "SSIM": [],
+                "NDVI_MAE": [],
+                "NBR_MAE": [],
             }
             for c in range(9)
         }
@@ -347,7 +366,8 @@ class BenchmarkRunner:
                 consistent_cloud = None
                 consistent_shadow = None
                 if cld_stats is not None:
-                    cld_stats = _to_bcthw(cld_stats.to(self.device), target_c=2)
+                    cld_stats = _to_bcthw(
+                        cld_stats.to(self.device), target_c=2)
                     # B,C,T,H,W -> B,C
                     avg_cld_shdw = torch.mean(cld_stats, dim=[2, 3, 4]).cpu()
                     # consistent cloud/shadow across all input frames
@@ -416,7 +436,7 @@ class BenchmarkRunner:
                             pred, target, class_valid)
                         if class_metrics["MAE"].numel() == 0:
                             continue
-                        for metric_name in ["MAE", "RMSE", "PSNR", "SAM", "SSIM"]:
+                        for metric_name in LULC_METRICS:
                             lulc_metric_values[class_id][metric_name].append(
                                 class_metrics[metric_name].detach().cpu()
                             )
@@ -473,7 +493,7 @@ class BenchmarkRunner:
         final_lulc_metrics = {}
         for class_id in range(9):
             class_result = {}
-            for metric_name in ["MAE", "RMSE", "PSNR", "SAM", "SSIM"]:
+            for metric_name in LULC_METRICS:
                 pieces = lulc_metric_values[class_id][metric_name]
                 if not pieces:
                     class_result[metric_name] = float("nan")
@@ -483,7 +503,7 @@ class BenchmarkRunner:
             final_lulc_metrics[class_id] = class_result
 
         with open(output_dir / f"{self.args.model_name}_lulc_metrics.csv", "w", newline="", encoding="utf-8") as f:
-            fieldnames = ["class", "MAE", "RMSE", "PSNR", "SAM", "SSIM"]
+            fieldnames = ["class", *LULC_METRICS]
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for class_id in range(9):

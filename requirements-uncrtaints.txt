@@ -16,3 +16,4 @@ rasterio==1.4.4
 requests==2.33.1
 tqdm==4.67.3
 urllib3==2.6.3
+matplotlib

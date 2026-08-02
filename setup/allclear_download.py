@@ -1,6 +1,12 @@
-# Wrapper around download.py (AllClear) that adds download options
-# (metadata-only, custom dataset, specific ROI IDs) and rewrites the
-# hardcoded server paths in the metadata JSONs to point at the local data/ folder.
+# Utility wrapper around download.py.
+#
+# What this adds:
+# - Metadata-only mode (download metadata without ROI data)
+# - Skip-metadata mode (reuse metadata already on disk)
+# - ROI filtering by IDs (--roi-id) or a text file (--roi-file)
+# - Dataset-based checks to download only missing or incomplete ROIs (--dataset-fpath)
+# - Optional cleanup of incomplete ROI folders before redownload (--repair-incomplete)
+# - Metadata path rewrite from server paths to local data/ paths
 
 import argparse
 import multiprocessing as mp

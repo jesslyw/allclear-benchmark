@@ -330,6 +330,8 @@ class EMRDM(BaseModel):
         if self.pairs is not None:
             data_ids = inputs["data_id"] if isinstance(inputs["data_id"], (list, tuple)) \
                 else [inputs["data_id"]]
+            if any(did not in self.pairs for did in data_ids):
+                return {"skip_batch": True}
             indices = [self.pairs[did]["s2_index"] for did in data_ids]
             t_cloudy = torch.tensor(
                 indices, dtype=torch.long, device=self.device)
@@ -355,8 +357,10 @@ class EMRDM(BaseModel):
             (s1_frame[:, 1] * 32.5 - 32.5).clamp(-25.0, 0.0) + 25.0) / 25.0
 
         if not self._logged_first_batch:
-            print(f"[EMRDM] s1_frame (raw [0,1]): VV [{s1_frame[:, 0].min():.3f}, {s1_frame[:, 0].max():.3f}] mean={s1_frame[:, 0].mean():.3f}  VH [{s1_frame[:, 1].min():.3f}, {s1_frame[:, 1].max():.3f}] mean={s1_frame[:, 1].mean():.3f}")
-            print(f"[EMRDM] s1_sen12ms (after VH renorm): VV [{s1_sen12ms[:, 0].min():.3f}, {s1_sen12ms[:, 0].max():.3f}] mean={s1_sen12ms[:, 0].mean():.3f}  VH [{s1_sen12ms[:, 1].min():.3f}, {s1_sen12ms[:, 1].max():.3f}] mean={s1_sen12ms[:, 1].mean():.3f}")
+            print(
+                f"[EMRDM] s1_frame (raw [0,1]): VV [{s1_frame[:, 0].min():.3f}, {s1_frame[:, 0].max():.3f}] mean={s1_frame[:, 0].mean():.3f}  VH [{s1_frame[:, 1].min():.3f}, {s1_frame[:, 1].max():.3f}] mean={s1_frame[:, 1].mean():.3f}")
+            print(
+                f"[EMRDM] s1_sen12ms (after VH renorm): VV [{s1_sen12ms[:, 0].min():.3f}, {s1_sen12ms[:, 0].max():.3f}] mean={s1_sen12ms[:, 0].mean():.3f}  VH [{s1_sen12ms[:, 1].min():.3f}, {s1_sen12ms[:, 1].max():.3f}] mean={s1_sen12ms[:, 1].mean():.3f}")
 
         # (B, 15, H, W): S1 first, then cloudy S2 (matches SEN12MS-CR training order)
         S1S2 = torch.cat([scale(s1_sen12ms), scale(cloudy_s2)], dim=1)
@@ -385,8 +389,11 @@ class EMRDM(BaseModel):
         out_01 = ((out + 1.0) / 2.0).clamp(0.0, 1.0)
         mu_01 = ((batch["S2"] + 1.0) / 2.0).clamp(0.0, 1.0)
         if not self._logged_first_batch:
-            print(f"[EMRDM] samples range: [{samples.min():.3f}, {samples.max():.3f}]  mean={samples.mean():.3f}")
-            print(f"[EMRDM] out_01 range:  [{out_01.min():.3f}, {out_01.max():.3f}]  mean={out_01.mean():.3f}")
-            print(f"[EMRDM] mu (cloudy) range: [{mu_01.min():.3f}, {mu_01.max():.3f}]  mean={mu_01.mean():.3f}")
+            print(
+                f"[EMRDM] samples range: [{samples.min():.3f}, {samples.max():.3f}]  mean={samples.mean():.3f}")
+            print(
+                f"[EMRDM] out_01 range:  [{out_01.min():.3f}, {out_01.max():.3f}]  mean={out_01.mean():.3f}")
+            print(
+                f"[EMRDM] mu (cloudy) range: [{mu_01.min():.3f}, {mu_01.max():.3f}]  mean={mu_01.mean():.3f}")
             self._logged_first_batch = True
         return {"output": out_01.unsqueeze(2)}  # (B, 13, 1, H, W)

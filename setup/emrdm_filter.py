@@ -45,7 +45,7 @@ def frame_occlusion(s2_fpath):
     return frac
 
 
-def phase2_find_pair(sample):
+def phase2_find_pair(sample, max_days):
     """Phase 2: for a sample, find the best S1-S2 pair by temporal proximity.
     Returns tuple: (pairing_metadata, has_tie, skipped_frame_count) or (None, False, skipped_count) if no valid pair.
     """
@@ -81,6 +81,8 @@ def phase2_find_pair(sample):
             "s2_cloudy_fraction": round(occlusion, 4),
             "s2_s1_delta_days": round(delta_days, 6),
         }
+        if delta_days > max_days:
+            continue
         # Store candidate as: (time_gap_in_seconds, s2_index, metadata_payload)
         candidates.append((int(delta_seconds), s2_idx, payload))
 
@@ -121,6 +123,12 @@ def main():
         help="Output path for EMRDM pairs metadata (filtering index)",
     )
     parser.add_argument(
+        "--max-days",
+        type=float,
+        default=2.0,
+        help="Maximum allowed S1-S2 temporal gap in days for a valid pair (default: 2.0)",
+    )
+    parser.add_argument(
         "--roi-list-out",
         default=None,
         help=(
@@ -148,7 +156,7 @@ def main():
     for sample_id, sample in tqdm(dataset.items(), desc="Filtering"):
         if not sample.get("s2_toa") or not sample.get("target"):
             continue
-        pair, _, skipped = phase2_find_pair(sample)
+        pair, _, skipped = phase2_find_pair(sample, max_days=args.max_days)
         skipped_frames += skipped
         if pair is not None:
             pairs[sample_id] = pair
@@ -161,6 +169,7 @@ def main():
         json.dumps(pairs, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     print(f"Saved {len(pairs)} EMRDM-eligible pairs to {args.pairs_out}")
+    print(f"Max allowed S1-S2 gap: {args.max_days} days")
     print(
         f"Eligible: {len(pairs)}/{len(dataset)} ({len(pairs)/len(dataset)*100:.1f}%)")
 

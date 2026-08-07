@@ -11,6 +11,7 @@ INTERSECTION_ROI_LIST=setup/intersection_candidates.txt
 VPINT2_PAIRS=setup/vpint2_pairs.json
 EMRDM_PAIRS=setup/emrdm_pairs.json
 INTERSECTION_SAMPLES=setup/intersection_samples.json
+EMRDM_MAX_DAYS=2.0
 
 # --- steps ---
 
@@ -21,7 +22,8 @@ python setup/vpint2_filter.py \
     --roi-list-out "$VPINT2_ROI_LIST"
 
 python setup/emrdm_filter.py \
-    --roi-list-out "$EMRDM_ROI_LIST"
+    --roi-list-out "$EMRDM_ROI_LIST" \
+    --max-days "$EMRDM_MAX_DAYS"
 
 # 2) Intersect VPint2 candidates with EMRDM candidates, download only that set
 comm -12 <(sort "$VPINT2_ROI_LIST") <(sort "$EMRDM_ROI_LIST") > "$INTERSECTION_ROI_LIST"
@@ -35,7 +37,7 @@ python setup/allclear_download.py \
 # 3) Run full VPint2 filter (uses downloaded masks)
 
 python setup/vpint2_filter.py
-python setup/emrdm_filter.py
+python setup/emrdm_filter.py --max-days "$EMRDM_MAX_DAYS"
 
 # 4) Intersect emrdm and vpint2 pairs to create the final sample set
 python setup/intersection_samples.py \

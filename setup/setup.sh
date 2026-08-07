@@ -12,6 +12,7 @@ VPINT2_PAIRS=setup/vpint2_pairs.json
 EMRDM_PAIRS=setup/emrdm_pairs.json
 INTERSECTION_SAMPLES=setup/intersection_samples.json
 EMRDM_MAX_DAYS=2.0
+EMRDM_MAX_DAYS=2.0
 
 # --- steps ---
 

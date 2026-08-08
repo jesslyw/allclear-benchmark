@@ -81,7 +81,9 @@ def phase2_find_pair(sample, max_days):
             "s2_cloudy_fraction": round(occlusion, 4),
             "s2_s1_delta_days": round(delta_days, 6),
         }
-        if delta_days > max_days:
+        # Runtime-like rule with max_days=2: exclude 3 days or more.
+        exclude_from_day = int(max_days) + 1
+        if delta_seconds >= exclude_from_day * 86400.0:
             continue
         # Store candidate as: (time_gap_in_seconds, s2_index, metadata_payload)
         candidates.append((int(delta_seconds), s2_idx, payload))
@@ -126,7 +128,7 @@ def main():
         "--max-days",
         type=float,
         default=2.0,
-        help="Maximum allowed S1-S2 temporal gap in days for a valid pair (default: 2.0)",
+        help="Max S1-S2 day gap bucket (default: 2.0)",
     )
     parser.add_argument(
         "--roi-list-out",

@@ -268,7 +268,7 @@ class UnCRtainTS(BaseModel):
 
         inputs["_uc_target"] = inputs["target"].permute(
             0, 2, 1, 3, 4)[:, :, :self.S2_BANDS]
-        inputs["input_cld_shdw"] = torch.clip(
+        inputs["_uc_masks"] = torch.clip(
             inputs["input_cld_shdw"].sum(dim=1), 0, 1)
 
         if "diagonal_1" in self.exp_name:
@@ -279,7 +279,7 @@ class UnCRtainTS(BaseModel):
     def forward(self, inputs):
         input_imgs = inputs["input_images"]
         target_imgs = inputs["_uc_target"]
-        masks = inputs["input_cld_shdw"]
+        masks = inputs["_uc_masks"]
         dates = inputs["time_differences"]
         model_inputs = {"A": input_imgs, "B": target_imgs,
                         "dates": dates, "masks": masks}

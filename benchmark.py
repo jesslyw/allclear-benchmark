@@ -9,6 +9,7 @@ import argparse
 import csv
 import json
 import os
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -298,6 +299,8 @@ class BenchmarkRunner:
         predictions = []
         metadata_rows = []
         vis_count = 0
+        inference_seconds = 0.0
+        inference_samples = 0
 
         dataset_name = Path(self.args.dataset_fpath).stem
         output_dir = Path(self.args.experiment_output_path) / \
@@ -326,10 +329,18 @@ class BenchmarkRunner:
                 if prepped.get("skip_batch"):
                     # for emrdm/vpint2: wrapper marked this batch as unusable (sample(s) not in filtered test set or had no usable matched S1 input)
                     continue
+                # time the forward pass only (preprocessing differs a lot between wrappers)
+                if self.device.type == "cuda":
+                    torch.cuda.synchronize()
+                _t0 = time.perf_counter()
                 pred = self.model.forward(prepped)["output"]
+                if self.device.type == "cuda":
+                    torch.cuda.synchronize()
                 # no model output
                 if pred is None:
                     continue
+                inference_seconds += time.perf_counter() - _t0
+                inference_samples += len(batch["data_id"])
 
                 target = batch["target"].to(self.device)
                 target_c = target.shape[1]
@@ -459,6 +470,7 @@ class BenchmarkRunner:
             "NDVI_MAE": torch.nanmean(merged["NDVI_MAE"]).item(),
             "NBR_MAE": torch.nanmean(merged["NBR_MAE"]).item(),
             "num_samples": num_samples,
+            "ms_per_sample": (inference_seconds / inference_samples * 1000.0) if inference_samples else float("nan"),
         }
 
         # artifact 1: predictions tensor

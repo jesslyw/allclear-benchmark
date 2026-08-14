@@ -99,8 +99,12 @@ def download_metadata():
         print(f"Failed to download {filename} after retries - check connection")
 
 
-def load_roi_list():
+def load_roi_list(roi_file=None):
     """Load and combine all ROI IDs from metadata files"""
+    if roi_file:  # a subset, e.g. setup/hard_subset_rois.txt
+        with open(roi_file) as f:
+            return sorted(line.strip() for line in f if line.strip())
+
     metadata_dir = Path("metadata")
     roi_ids = set()
 
@@ -163,6 +167,8 @@ def main():
     parser = argparse.ArgumentParser(description='Download dataset with configurable CPU cores')
     parser.add_argument('--cpus', type=int, default=8,
                        help='Number of CPU cores to use (default: 8)')
+    parser.add_argument('--roi-file', default=None,
+                       help='Download only the ROI ids listed in this file')
     args = parser.parse_args()
 
     # Calculate N_CORES using args.cpus
@@ -174,7 +180,7 @@ def main():
 
     # Load ROI IDs
     print("\nLoading ROI IDs from metadata...")
-    roi_ids = load_roi_list()
+    roi_ids = load_roi_list(args.roi_file)
     print(f"Found {len(roi_ids)} unique ROI IDs")
 
     # Split ROIs into chunks for parallel processing

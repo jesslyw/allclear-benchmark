@@ -1,14 +1,13 @@
-"""Filter AllClear test samples to VPint2-eligible candidates.
+"""Using downloaded metadata files (metadata/datasets/test_tx3_s2-s1_100pct_1proi.json and metadata/data/s2_metadata.csv), this script filters AllClear's test samples down to those meeting the input criteria for the VPint2 cloud removal model.
 
-Two-phase filtering approach:
-- Phase 1 (uses AllClear's test_tx3_s2-s1_100pct_1proi.json metadata + s2_metadata.csv): Screen ROI candidates using cloud/shadow percentages for data download via allclear-download.py
-- Phase 2: using downloaded data, select VPint2 eligible reference+cloudy S2 pairs per ROI
+VPint2's input criteria:
+- pair where: clear frame (≤10% occlusion) <= 10 days before a cloudy frame 
 
-Outputs:
-- vpint2_pairs.json: references the selected reference+cloudy S2 pairs per ROI in test_tx3_s2-s1_100pct_1proi.json, plus pair metadata (cloud %, gap days)
-- optional ROI list (--roi-list-out): ROI IDs from Phase 1, used for data download before Phase 2
+Two-phase filtering approach (run in order via setup.sh, with the data download in between):
+- Phase 1 (run with flag --roi-list-out): Screen samples using metadata cloud/shadow percentages. Outputs a list of ROI IDs for download (those certainly, or possibly meeting VPint2's input criteria)
+- Phase 2: using downloaded data, select final VPint2 eligible reference+cloudy S2 pairs per ROI (read downloaded cloud/shadow masks for true occlusion and resolve the uncertain cases from Phase 1). Outputs a reference to these pairs as vpint2_pairs.json
 
-Note: Full sample metadata is retrieved from the original test_tx3_s2-s1_100pct_1proi.json using vpint2_pairs.json as the filtering index.
+Note: During benchmark run, full sample metadata is retrieved from the original test_tx3_s2-s1_100pct_1proi.json using vpint2_pairs.json as the filtering index.
 """
 
 import argparse

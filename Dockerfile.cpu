@@ -1,0 +1,29 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    curl \
+    ca-certificates \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --upgrade pip uv
+
+WORKDIR /opt/setup
+COPY requirements.txt /opt/setup/requirements.txt
+#COPY requirements-uncrtaints.txt /opt/setup/requirements-uncrtaints.txt
+
+RUN uv pip install --system -r /opt/setup/requirements.txt
+#RUN uv pip install --system -r /opt/setup/requirements-uncrtaints.txt
+
+WORKDIR /workspace
+ENTRYPOINT ["bash"]

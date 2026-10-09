@@ -1,12 +1,13 @@
-"""Keep only the AllClear test samples that EMRDM can run on, using the SEN12MS-CR checkpoint.
+"""Using the downloaded metadata file (metadata/datasets/test_tx3_s2-s1_100pct_1proi.json), this script filters AllClear's test samples down to those meeting the input criteria for the EMRDM cloud removal model.
 
-Two-phase filtering approach:
-- Phase 1 (uses AllClear's test_tx3_s2-s1_100pct_1proi.json metadata): identify ROIs with S1, S2, and target data for download via allclear-download.py
-- Phase 2: using downloaded data, select EMRDM eligible S1-S2 pairs per ROI
+EMRDM's input criteria:
+- pair of S1(SAR) and S2 images < 3 days apart  
 
-Outputs:
-- emrdm_pairs.json: references the selected S1-S2 pairs per ROI in test_tx3_s2-s1_100pct_1proi.json, plus pair metadata (cloudy %, delta days)
-- optional ROI list (--roi-list-out): ROI IDs from Phase 1, used for data download before Phase 2
+Two-phase filtering approach (run in order via setup.sh, with the data download in between):
+- Phase 1 (run with flag --roi-list-out): Identify ROIs with an S1(SAR) image. Outputs a list of ROI IDs for download
+- Phase 2: select for each sample the S2 – S1 image pair with the smallest time gap, keeping only pairs < 3 days apart. Outputs emrdm_pairs.json
+
+Note: During benchmark run, full sample metadata is retrieved from the original test_tx3_s2-s1_100pct_1proi.json using emrdm_pairs.json as the filtering index.
 
 """
 

@@ -1,0 +1,21 @@
+services:
+  setup:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    command: ["-c", "bash setup/setup.sh"]
+
+  cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    environment:
+      MODEL: "${MODEL:-LeastCloudy}"
+    command:
+      ["-c", 'python3 benchmark.py --model-name "$$MODEL" --batch-size 4']

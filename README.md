@@ -1,52 +1,89 @@
 # allclear-benchmark
 
 Benchmark for evaluating cloud removal models on the [AllClear](https://github.com/Zhou-Hangyu/allclear) dataset.
-Implements VPint2 as a baseline, evaluated on a filtered subset of the AllClear test set.
 
-## Requirements
+Five methods are compared on the same 366 scenes: two baselines (LeastCloudy, Mosaicing),
+one interpolation method (VPint2), and two deep learning models (UnCRtainTS, EMRDM).
 
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Run all commands from the repo root.
+## What you need
 
-```bash
-# VPint2, LeastCloudy, Mosaicing
-uv venv .venv --python 3.13
-source .venv/bin/activate
-uv pip install -r requirements.txt
+- Docker with Compose, and an NVIDIA GPU for UnCRtainTS and EMRDM
+- ~65 GB free disk for the AllClear imagery
+- Several hours for the download
 
-# EMRDM
-uv venv emrdm --python 3.10
-source emrdm/bin/activate
-uv pip install "setuptools==69.5.1"
-uv pip install -r requirements-emrdm.txt --index-url https://download.pytorch.org/whl/cu121
-uv pip install flash_attn==2.5.9.post1 --no-build-isolation
-# natten wheel (torch2.2 + cu121)
-uv pip install "natten==0.17.1+torch220cu121" -f https://shi-labs.com/natten/wheels
+Everything runs in containers; nothing is installed on the host.
 
-# UnCRtainTS
-uv venv uncrtaints --python 3.13
-source uncrtaints/bin/activate
-uv pip install -r requirements-uncrtaints.txt
-```
-
-No environment activation is needed after this - use `run.py` for all models.
-
-## Setup
-
-Filters the AllClear test set to a subset compatible with VPint2's input requirements. See [methodology.md](docs/methodology.md) for the filtering criteria.
-
-Run from the repo root:
+## 1. Clone
 
 ```bash
-bash setup/setup.sh
+git clone --recurse-submodules https://github.com/jesslyw/allclear-benchmark.git
+cd allclear-benchmark
 ```
 
-This will:
+If you already cloned without the flag:
 
-1. Download AllClear metadata (dataset JSONs + cloud/shadow CSVs)
-2. Filter the test set to VPint2-eligible samples → `setup/vpint2_pairs.json`, `setup/vpint2_dataset.json`
-3. Download the image data (TIFFs) for the eligible ROIs
+```bash
+git submodule update --init --recursive
+```
 
-Thresholds used for filtering can be configured at the top of `setup/setup.sh`.
+## 2. Download model checkpoints
+
+LeastCloudy, Mosaicing and VPint2 need no checkpoints. The two deep learning models do:
+
+| Model      | Download from                                                                                                                                                                                                                                                            | Place at                                                                                                                        |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| EMRDM      | [Google Drive](https://drive.google.com/drive/folders/1T3OwRNP5r5qVLQZujnl2WDBVXHC1Am65?usp=sharing) (also [Aliyun](https://www.alipan.com/s/39BcJezgsBC) / [Baidu](https://pan.baidu.com/s/1RqYgluNNcYKXOa33kQioMQ), code `6161`) — `train/sentinel/last.ckpt` (597 MB) | `models/EMRDM/checkpoints/last.ckpt`                                                                                            |
+| UnCRtainTS | [pCloud](https://u.pcloud.link/publink/show?code=kZsdbk0Z5Y2Y2UEm48XLwOvwSVlL8R2L3daV) — the `diagonal_1` folder (7 MB)                                                                                                                                                  | `models/UnCRtainTS/` — keep the folder intact, so that `models/UnCRtainTS/diagonal_1/` contains `conf.json` and `model.pth.tar` |
+
+## 3. Setup: download and filter the data
+
+```bash
+docker compose run --rm setup
+```
+
+This filters the AllClear test set down to the scenes VPint2 and EMRDM can run on, then
+downloads only those. The other three models have no such requirements, and are evaluated
+on the same scenes so the results are comparable.
+
+1. Download AllClear metadata
+2. Screen for VPint2-eligible and EMRDM-eligible ROIs (metadata only, no imagery)
+3. Download the imagery for the intersection of both lists
+4. Re-run both filters against the downloaded cloud/shadow masks
+5. Intersect the results → `setup/intersection_samples.json` (366 scenes)
+
+## 4. Run the benchmark
+
+One command per model:
+
+```bash
+docker compose run --rm -e MODEL=LeastCloudy cpu
+docker compose run --rm -e MODEL=Mosaicing   cpu
+docker compose run --rm vpint2
+docker compose run --rm uncrtaints
+docker compose run --rm emrdm
+```
+
+Each writes to `outputs/AllClear/intersection_samples/`:
+
+- `<Model>_aggregated_metrics.csv` — one row, the headline numbers
+- `<Model>_metadata.csv` — per-scene metrics
+- `<Model>_lulc_metrics.csv` — metrics broken down by land cover
+- `<Model>_predictions.pt` — the predicted images
+
+Models are independent, so a failed one can be rerun on its own.
+
+> EMRDM is a diffusion model and samples stochastically, so its metrics vary slightly
+> between runs.
+
+## 5. Produce the thesis figures and tables
+
+```bash
+docker compose run --rm cpu -c \
+  "jupyter nbconvert --to notebook --execute --inplace analysis/notebooks/thesis_artifact_analysis.ipynb"
+```
+
+Writes to `outputs/thesis/plots/` and `outputs/thesis/tables/`. The notebook reads the
+CSVs and prediction tensors from step 4 and regenerates every figure and table in the thesis.
 
 ## Metrics
 
@@ -67,59 +104,69 @@ Downstream application metrics:
 | NDVI-MAE | Error in [Normalized Difference Vegetation Index](https://www.usgs.gov/landsat-missions/landsat-normalized-difference-vegetation-index) |
 | NBR-MAE  | Error in [Normalized Burn Ratio](https://www.usgs.gov/landsat-missions/landsat-normalized-burn-ratio)                                   |
 
-Because NDVI and NBR are based on relationships between specific spectral bands, they may detect changes that are not always visible in standard pixel-by-pixel comparisons
+Inference time per scene is recorded as `ms_per_sample` in the aggregated metrics.
 
-## Run benchmark
+## Models
 
-**Quick test (single ROI):**
+| Model       | Type                  | Paper                                                                                                                                                                                                     | Repository                                                        |
+| ----------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| LeastCloudy | Baseline              | —                                                                                                                                                                                                         | —                                                                 |
+| Mosaicing   | Baseline              | —                                                                                                                                                                                                         | —                                                                 |
+| VPint2      | Spatial interpolation | [Arp et al.](https://doi.org/10.1016/j.isprsjprs.2024.07.030)                                                                                                                                             | [ADA-research/VPint2](https://github.com/ADA-research/VPint2)     |
+| UnCRtainTS  | Deep learning         | [Ebel et al., CVPRW 2023](https://openaccess.thecvf.com/content/CVPR2023W/EarthVision/papers/Ebel_UnCRtainTS_Uncertainty_Quantification_for_Cloud_Removal_in_Optical_Satellite_Time_CVPRW_2023_paper.pdf) | [PatrickTUM/UnCRtainTS](https://github.com/PatrickTUM/UnCRtainTS) |
+| EMRDM       | Diffusion             | [Liu et al.](https://github.com/Ly403/EMRDM)                                                                                                                                                              | [Ly403/EMRDM](https://github.com/Ly403/EMRDM)                     |
 
-```bash
-python run.py --model-name LeastCloudy --selected-rois roi110646
+VPint2 is pinned to [a fork](https://github.com/jesslyw/VPint2) carrying one fix:
+`np.product` -> `np.prod`, removed in NumPy 2.0, which upstream VPint2 still uses.
 
-python run.py --model-name Mosaicing --selected-rois roi110646
+## Extras
 
-python run.py --model-name VPint2 --vpint2-pairs-fpath setup/vpint2_pairs.json --selected-rois roi110646 --batch-size 1
+### Hard subset
 
-python run.py --model-name UnCRtainTS --uncrtaints-weight-folder . --uncrtaints-experiment-name diagonal_1 --aux-sensors s1 --selected-rois roi110646
-
-python run.py --model-name EMRDM --emrdm-config-fpath models/EMRDM/configs/example_training/sentinel.yaml --emrdm-ckpt-fpath models/EMRDM/checkpoints/sen12mscr.ckpt --aux-sensors s1 --selected-rois roi110646
-```
-
-**Full benchmark:**
-
-```bash
-python run.py --model-name LeastCloudy --batch-size 4
-
-python run.py --model-name Mosaicing --batch-size 4
-
-python run.py --model-name VPint2 --vpint2-pairs-fpath setup/vpint2_pairs.json --batch-size 1
-
-python run.py --model-name UnCRtainTS --uncrtaints-weight-folder . --uncrtaints-experiment-name diagonal_1 --aux-sensors s1 --batch-size 8
-
-python run.py --model-name EMRDM --emrdm-config-fpath models/EMRDM/configs/example_training/sentinel.yaml --emrdm-ckpt-fpath models/EMRDM/checkpoints/sen12mscr.ckpt --aux-sensors s1 --batch-size 1
-```
-
-## Visualise predictions (VPint2)
+A second test set of scenes where **every** input frame is at least 90% clouded, so nothing
+can be copied from a clear date and the model must reconstruct. VPint2 cannot run here, as
+it requires a clear reference frame.
 
 ```bash
-python visualise.py --roi <roi>
+docker compose run --rm cpu -c \
+  "python3 setup/hard_subset.py && python3 setup/allclear_download.py --roi-file setup/hard_subset_rois.txt --skip-metadata"
+
+docker compose run --rm -e MODEL=LeastCloudy cpu-hard
+docker compose run --rm -e MODEL=Mosaicing   cpu-hard
+docker compose run --rm uncrtaints-hard
+docker compose run --rm emrdm-hard
 ```
 
-Output saved to `pred_vs_target/<roi_id>.png`.
+Results go to `outputs_hard/AllClear/hard_subset/`.
 
-Example output: ![Example visualisation](pred_vs_target/roi793494_2022-08-04_2022-08-11.png)
-
-## Visualise all ROIs on a map
-
-A small helper script is provided to generate a GeoJSON file from the filtered VPint2-compatible dataset used in this benchmark, which can be visualised using a map tool like https://geojson.io/next.
+### Visualise a prediction
 
 ```bash
-python setup/make_geojson.py
+docker compose run --rm cpu -c "python3 visualise.py --roi <roi_id>"
 ```
+
+Saved to `pred_vs_target/<roi_id>.png`.
+
+![Example visualisation](pred_vs_target/roi793494_2022-08-04_2022-08-11.png)
+
+### Visualise the ROIs on a map
+
+```bash
+docker compose run --rm cpu -c "python3 setup/make_geojson.py"
+```
+
+Writes `setup/index.json`, viewable at [geojson.io](https://geojson.io/next).
+
+### Running without Docker
+
+`run.py` dispatches each model to its own virtual environment on the host. See the
+environment definitions in `Dockerfile.cpu`, `Dockerfile.uncrtaints` and `Dockerfile.emrdm`
+for the dependencies each model needs.
 
 ## Attribution
 
-- Dataset, data loading, and model wrappers (`dataset.py`, `download.py`, `model_wrappers.py`) based on [AllClear](https://github.com/Zhou-Hangyu/allclear) (MIT License)
+- Dataset, data loading, and model wrappers (`dataset.py`, `download.py`, `model_wrappers.py`)
+  based on [AllClear](https://github.com/Zhou-Hangyu/allclear) (MIT License)
 - VPint2: [ADA-research/VPint2](https://github.com/ADA-research/VPint2)
-- EMRDM: [Ly403/EMRDM](https://github.com/Ly403/EMRDM)
+- EMRDM: [Ly403/EMRDM](https://github.com/Ly403/EMRDM) (AGPL-3.0)
 - UnCRtainTS: [PatrickTUM/UnCRtainTS](https://github.com/PatrickTUM/UnCRtainTS)

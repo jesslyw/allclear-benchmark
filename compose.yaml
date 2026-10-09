@@ -19,3 +19,97 @@ services:
       MODEL: "${MODEL:-LeastCloudy}"
     command:
       ["-c", 'python3 benchmark.py --model-name "$$MODEL" --batch-size 4']
+
+  vpint2:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    command: ["-c", "python3 benchmark.py --model-name VPint2 --batch-size 1"]
+
+  uncrtaints:
+    build:
+      context: .
+      dockerfile: Dockerfile.uncrtaints
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    gpus:
+      - driver: nvidia
+        count: all
+        capabilities: [gpu]
+    command:
+      [
+        "-c",
+        "python3 benchmark.py --model-name UnCRtainTS --uncrtaints-weight-folder . --uncrtaints-experiment-name diagonal_1 --aux-sensors s1 --batch-size 1 --draw-vis 0 --device cuda",
+      ]
+
+  emrdm:
+    build:
+      context: .
+      dockerfile: Dockerfile.emrdm
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    gpus:
+      - driver: nvidia
+        count: all
+        capabilities: [gpu]
+    command:
+      [
+        "-c",
+        "python3 benchmark.py --model-name EMRDM --emrdm-config-fpath models/EMRDM/configs/example_training/sentinel.yaml --emrdm-ckpt-fpath models/EMRDM/checkpoints/last.ckpt --emrdm-pairs-fpath setup/emrdm_pairs.json --aux-sensors s1 --batch-size 1 --draw-vis 0 --device cuda",
+      ]
+
+  # --- hard subset (see README) ---
+
+  cpu-hard:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    environment:
+      MODEL: "${MODEL:-LeastCloudy}"
+    command:
+      [
+        "-c",
+        'python3 benchmark.py --model-name "$$MODEL" --batch-size 4 --dataset-fpath setup/hard_subset.json --experiment-output-path outputs_hard',
+      ]
+
+  uncrtaints-hard:
+    build:
+      context: .
+      dockerfile: Dockerfile.uncrtaints
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    gpus:
+      - driver: nvidia
+        count: all
+        capabilities: [gpu]
+    command:
+      [
+        "-c",
+        "python3 benchmark.py --model-name UnCRtainTS --uncrtaints-weight-folder . --uncrtaints-experiment-name diagonal_1 --aux-sensors s1 --batch-size 1 --draw-vis 0 --device cuda --dataset-fpath setup/hard_subset.json --experiment-output-path outputs_hard",
+      ]
+
+  emrdm-hard:
+    build:
+      context: .
+      dockerfile: Dockerfile.emrdm
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    gpus:
+      - driver: nvidia
+        count: all
+        capabilities: [gpu]
+    command:
+      [
+        "-c",
+        "python3 benchmark.py --model-name EMRDM --emrdm-config-fpath models/EMRDM/configs/example_training/sentinel.yaml --emrdm-ckpt-fpath models/EMRDM/checkpoints/last.ckpt --emrdm-pairs-fpath setup/emrdm_pairs.json --aux-sensors s1 --batch-size 1 --draw-vis 0 --device cuda --dataset-fpath setup/hard_subset.json --experiment-output-path outputs_hard",
+      ]

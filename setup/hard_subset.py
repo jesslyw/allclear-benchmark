@@ -1,10 +1,8 @@
-"""Build a test set of scenes where no input frame is usable.
+"""Build a test set of hard scenes: every S2 frame at least 90% clouded.
 
-The main benchmark only has scenes with a clear frame available, because VPint2 needs
-one. This picks the opposite: scenes where every S2 frame is almost fully clouded, so
-there is nothing to copy. Cloud values come from AllClear's own metadata, so no images
-need to be downloaded to build the list. Only scenes in emrdm_pairs.json are kept, which
-also guarantees a usable S1 image. VPint2 cannot run on these.
+No frame is clear, so nothing can be copied from another date and the model has to
+reconstruct. This is the opposite of the main 366-sample set, where VPint2's filter
+guarantees a clear frame. Cloud values come from AllClear's metadata; emrdm_pairs.json keeps only scenes with usable S1. VPint2 cannot run here.
 
 Run: python3 setup/hard_subset.py
 """
@@ -31,14 +29,16 @@ def main():
     emrdm = json.loads(Path(args.emrdm_pairs_fpath).read_text())
 
     # cloud percentage per image, straight from AllClear's metadata
-    meta = pd.read_csv(S2_META, usecols=["image_file_path", "cloud_percentage_30"])
+    meta = pd.read_csv(S2_META, usecols=[
+                       "image_file_path", "cloud_percentage_30"])
     cloud = dict(zip(meta.image_file_path, meta.cloud_percentage_30))
 
     picked = {}
     for data_id, sample in full.items():
         if data_id not in emrdm:  # EMRDM needs a matching S1 image
             continue
-        clouds = [cloud[path.removeprefix("data/")] for _, path in sample["s2_toa"]]
+        clouds = [cloud[path.removeprefix("data/")]
+                  for _, path in sample["s2_toa"]]
         if min(clouds) >= args.min_cloud:
             picked[data_id] = sample
 
@@ -47,7 +47,8 @@ def main():
 
     rois = sorted({s["roi"][0] for s in picked.values()})
     Path("setup/hard_subset_rois.txt").write_text("\n".join(rois) + "\n")
-    print(f"Wrote {len(rois)} ROI ids to setup/hard_subset_rois.txt (for download.py)")
+    print(
+        f"Wrote {len(rois)} ROI ids to setup/hard_subset_rois.txt (for download.py)")
 
 
 if __name__ == "__main__":

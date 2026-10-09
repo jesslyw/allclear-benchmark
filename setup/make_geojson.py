@@ -1,5 +1,5 @@
 """
-Generate index.json (GeoJSON) from vpint2_samples.json 
+Generate index.json (GeoJSON) from intersection_samples.json
 
 Helps visualise rois using a map tool like https://geojson.io/next 
 """
@@ -7,7 +7,7 @@ Helps visualise rois using a map tool like https://geojson.io/next
 import json
 from pathlib import Path
 
-samples_path = Path(__file__).parent / "vpint2_samples.json"
+samples_path = Path(__file__).parent / "intersection_samples.json"
 samples = json.loads(samples_path.read_text())
 
 features = []

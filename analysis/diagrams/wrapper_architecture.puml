@@ -1,0 +1,49 @@
+@startuml wrapper_architecture
+title AllClear-Based Wrapper Architecture
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam classFontSize 13
+skinparam classAttributeFontSize 12
+
+' Exactly 2 colors: grey = AllClear (reused/adapted), pink = thesis contribution.
+' No package borders/backgrounds, no legend table -- color + labels carry the meaning.
+
+class BenchmarkRunner #f5f5f5 {
+  __init__()
+  _setup_model()
+  _setup_data_loader()
+  run()
+}
+class AllClearDataset #f5f5f5 {
+  __init__()
+  __getitem__()
+  __len__()
+}
+class "metrics.py" as Metrics <<module>> #f5f5f5 {
+  + compute_batch_metrics()
+}
+abstract class BaseModel <<ABC>> #f5f5f5 {
+  __init__()
+  {abstract} get_model_config()
+  {abstract} preprocess()
+  {abstract} forward()
+}
+class LeastCloudy #f5f5f5
+class Mosaicing #f5f5f5
+class UnCRtainTS #f5f5f5
+
+class VPint2 #FFB3B3
+class EMRDM #FFB3B3
+
+BenchmarkRunner --> AllClearDataset : DataLoader
+BenchmarkRunner ..> Metrics : calls
+BenchmarkRunner --> BaseModel : selects model
+
+BaseModel <|-- LeastCloudy
+BaseModel <|-- Mosaicing
+BaseModel <|-- VPint2
+BaseModel <|-- UnCRtainTS
+BaseModel <|-- EMRDM
+
+@enduml

@@ -1,9 +1,14 @@
 # allclear-benchmark
 
-Benchmark for evaluating cloud removal models on the [AllClear](https://github.com/Zhou-Hangyu/allclear) dataset.
+Codebase for the thesis **Evaluation of Classical, Generative, and Multi-Temporal Methods
+for Sentinel-2 Cloud Removal: Impacts on Reconstruction Quality and Spectral Index
+Preservation**.
 
-Five methods are compared on the same 366 scenes: two baselines (LeastCloudy, Mosaicing),
-one interpolation method (VPint2), and two deep learning models (UnCRtainTS, EMRDM).
+![Cloudy input, VPint2 reconstruction, and ground truth](assets/readme_banner.png)
+
+Five methods are compared on the same 366 scenes from the
+[AllClear](https://github.com/Zhou-Hangyu/allclear) dataset: two baselines (LeastCloudy,
+Mosaicing), one interpolation method (VPint2), and two deep learning models (UnCRtainTS, EMRDM).
 
 ## What you need
 
@@ -40,6 +45,16 @@ LeastCloudy, Mosaicing and VPint2 need no checkpoints. The two deep learning mod
 ```bash
 docker compose run --rm setup
 ```
+
+The download could take up to several hours. If you are on SSH, run it inside `tmux` so a dropped
+connection does not interrupt it:
+
+```bash
+tmux new -s setup
+docker compose run --rm setup
+```
+
+(Rerunning setup is safe and skips any ROIs already on disk.)
 
 This filters the AllClear test set down to the scenes VPint2 and EMRDM can run on, then
 downloads only those. The other three models have no such requirements, and are evaluated
@@ -120,6 +135,8 @@ VPint2 is pinned to [a fork](https://github.com/jesslyw/VPint2) carrying one fix
 `np.product` -> `np.prod`, removed in NumPy 2.0, which upstream VPint2 still uses.
 
 ## Extras
+
+Secondary analyses and utilities, separate from the five-model benchmark above.
 
 ### Hard subset
 

@@ -1,6 +1,6 @@
 [submodule "models/VPint2"]
 	path = models/VPint2
-	url = https://github.com/ADA-research/VPint2.git
+	url = https://github.com/jesslyw/VPint2.git
 
 [submodule "models/EMRDM"]
 	path = models/EMRDM

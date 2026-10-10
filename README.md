@@ -33,7 +33,14 @@ git submodule update --init --recursive
 
 ## 2. Download model checkpoints
 
-LeastCloudy, Mosaicing and VPint2 need no checkpoints. The two deep learning models do:
+LeastCloudy, Mosaicing and VPint2 need no checkpoints. The two deep learning models do.
+First create EMRDM's checkpoint directory:
+
+```bash
+mkdir -p models/EMRDM/checkpoints
+```
+
+Then download the respective checkpoints and place them (using a tool like rsync) in the target directories specified in the table below.
 
 | Model      | Download from                                                                                                                                                                                                                                                            | Place at                                                                                                                        |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
